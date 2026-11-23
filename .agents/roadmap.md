@@ -10,36 +10,36 @@ Target: the first PyPI release, `zur` 4.6.2
 first (stage 19); Linux aarch64, macOS arm64, macOS x86_64 and Windows
 x86_64 join the same version as each passes (stages 20 to 23), per
 [D12](design.md#15-decisions) and [§12](design.md#12-speed-benchmark).
-Tracking: [First PyPI release (#?)](https://github.com/pedrobtz/py-zur/issues/?),
-with one sub-issue per stage; [PyPI-release (#?)](https://github.com/pedrobtz/py-zur/issues/?).
+Tracking: [First PyPI release (#2)](https://github.com/pedrobtz/py-zur/issues/2),
+with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/py-zur/issues/25).
 
 ## Stages
 
 | Stage | Title | CI | Issue | Pull request | Done |
 | --- | --- | --- | --- | --- | --- |
 | 1 | [linux-64 wheel](#stage-1--linux-64-wheel) | quick | — | [#1](https://github.com/pedrobtz/py-zur/pull/1) | 2026-11-23 |
-| 2 | [Project identity and CI profiles](#stage-2--project-identity-and-ci-profiles) | quick | #? | | |
-| 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | #? | | |
-| 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | #? | | |
-| 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | #? | | |
-| 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | #? | | |
-| 7 | [User library](#stage-7--user-library) | quick | #? | | |
-| 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | #? | | |
-| 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | #? | | |
-| 10 | [Source packages across host compilers](#stage-10--source-packages-across-host-compilers) | full | #? | | |
-| 11 | [zur doctor](#stage-11--zur-doctor) | quick | #? | | |
-| 12 | [First-run warning](#stage-12--first-run-warning) | quick | #? | | |
-| 13 | [Licences and build info](#stage-13--licences-and-build-info) | quick | #? | | |
-| 14 | [Source mirror](#stage-14--source-mirror) | quick | #? | | |
-| 15 | [Versioning and release pipeline](#stage-15--versioning-and-release-pipeline) | full | #? | | |
-| 16 | [Benchmark and release gate](#stage-16--benchmark-and-release-gate) | quick | #? | | |
-| 17 | [README and wheel metadata](#stage-17--readme-and-wheel-metadata) | quick | #? | | |
-| 18 | [Review](#stage-18--review) | full | #? | | |
-| 19 | [Release Linux x86_64](#stage-19--release-linux-x86_64) | full | #? | | |
-| 20 | [Linux aarch64](#stage-20--linux-aarch64) | full | #? | | |
-| 21 | [macOS arm64](#stage-21--macos-arm64) | full | #? | | |
-| 22 | [macOS x86_64](#stage-22--macos-x86_64) | full | #? | | |
-| 23 | [Windows x86_64](#stage-23--windows-x86_64) | full | #? | | |
+| 2 | [Project identity and CI profiles](#stage-2--project-identity-and-ci-profiles) | quick | [#3](https://github.com/pedrobtz/py-zur/issues/3) | | |
+| 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | [#4](https://github.com/pedrobtz/py-zur/issues/4) | | |
+| 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | [#5](https://github.com/pedrobtz/py-zur/issues/5) | | |
+| 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | | |
+| 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | | |
+| 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | | |
+| 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | | |
+| 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | [#10](https://github.com/pedrobtz/py-zur/issues/10) | | |
+| 10 | [Source packages across host compilers](#stage-10--source-packages-across-host-compilers) | full | [#11](https://github.com/pedrobtz/py-zur/issues/11) | | |
+| 11 | [zur doctor](#stage-11--zur-doctor) | quick | [#12](https://github.com/pedrobtz/py-zur/issues/12) | | |
+| 12 | [First-run warning](#stage-12--first-run-warning) | quick | [#13](https://github.com/pedrobtz/py-zur/issues/13) | | |
+| 13 | [Licences and build info](#stage-13--licences-and-build-info) | quick | [#14](https://github.com/pedrobtz/py-zur/issues/14) | | |
+| 14 | [Source mirror](#stage-14--source-mirror) | quick | [#15](https://github.com/pedrobtz/py-zur/issues/15) | | |
+| 15 | [Versioning and release pipeline](#stage-15--versioning-and-release-pipeline) | full | [#16](https://github.com/pedrobtz/py-zur/issues/16) | | |
+| 16 | [Benchmark and release gate](#stage-16--benchmark-and-release-gate) | quick | [#17](https://github.com/pedrobtz/py-zur/issues/17) | | |
+| 17 | [README and wheel metadata](#stage-17--readme-and-wheel-metadata) | quick | [#18](https://github.com/pedrobtz/py-zur/issues/18) | | |
+| 18 | [Review](#stage-18--review) | full | [#19](https://github.com/pedrobtz/py-zur/issues/19) | | |
+| 19 | [Release Linux x86_64](#stage-19--release-linux-x86_64) | full | [#20](https://github.com/pedrobtz/py-zur/issues/20) | | |
+| 20 | [Linux aarch64](#stage-20--linux-aarch64) | full | [#21](https://github.com/pedrobtz/py-zur/issues/21) | | |
+| 21 | [macOS arm64](#stage-21--macos-arm64) | full | [#22](https://github.com/pedrobtz/py-zur/issues/22) | | |
+| 22 | [macOS x86_64](#stage-22--macos-x86_64) | full | [#23](https://github.com/pedrobtz/py-zur/issues/23) | | |
+| 23 | [Windows x86_64](#stage-23--windows-x86_64) | full | [#24](https://github.com/pedrobtz/py-zur/issues/24) | | |
 
 Stages 2 to 19 are the first wheel's critical path and touch no other
 platform. Stages 20 to 23 are independent of each other and may be
@@ -109,7 +109,7 @@ relocation test.
 
 ## Stage 2 — Project identity and CI profiles
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#3](https://github.com/pedrobtz/py-zur/issues/3), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`.
 
@@ -145,7 +145,7 @@ every later stage starts from a shuffled, gated suite.
 
 ## Stage 3 — R from source in manylinux
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#4](https://github.com/pedrobtz/py-zur/issues/4), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`. A new job runs in the `manylinux_2_28_x86_64` image;
 Linux only, so it is verified in Actions, not on the maintainer's
@@ -215,7 +215,7 @@ from the machine, and the result runs inside the build container.
 
 ## Stage 4 — Pinned dependencies
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#5](https://github.com/pedrobtz/py-zur/issues/5), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`. Linux only, verified in Actions.
 
@@ -258,7 +258,7 @@ the same container.
 
 ## Stage 5 — Repair and the Linux x86_64 wheel
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#6](https://github.com/pedrobtz/py-zur/issues/6), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`. Linux only, verified in Actions. This stage replaces the
 prototype's build and test jobs.
@@ -330,7 +330,7 @@ with nothing pointing at the build.
 
 ## Stage 6 — Headless runtime files
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#7](https://github.com/pedrobtz/py-zur/issues/7), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`. Adds the two minimal images to the quick profile; Linux
 only, verified in Actions.
@@ -387,7 +387,7 @@ containers), [§15 D13](design.md#15-decisions).
 
 ## Stage 7 — User library
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#8](https://github.com/pedrobtz/py-zur/issues/8), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`. Linux only, verified in Actions; the shared-home case
 runs two containers from one job with `docker run -v`.
@@ -433,7 +433,7 @@ distribution, unless the user chose another (D10).
 
 ## Stage 8 — pak and P3M binaries
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#9](https://github.com/pedrobtz/py-zur/issues/9), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`. Linux only, verified in Actions.
 
@@ -484,7 +484,7 @@ installs a P3M binary, with no `repos` or user-agent setting.
 
 ## Stage 9 — Prune and size budget
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#10](https://github.com/pedrobtz/py-zur/issues/10), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`. The size check's tests run locally; the wheel's size
 only in Actions.
@@ -526,7 +526,7 @@ goal 4 in [§2](design.md#2-goals-non-goals-anti-goals), [§15 D6, D14, D19](des
 
 ## Stage 10 — Source packages across host compilers
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#11](https://github.com/pedrobtz/py-zur/issues/11), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `full — adds the host compiler matrix, which only the full
 profile runs.` Linux only, verified in Actions.
@@ -576,7 +576,7 @@ the oldest supported host compiler to the newest, even though
 
 ## Stage 11 — zur doctor
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#12](https://github.com/pedrobtz/py-zur/issues/12), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`. The tables and output format are tested locally in
 `tests/test_unit.py`; behaviour in containers only in Actions.
@@ -627,7 +627,7 @@ in stages 21 to 23.
 
 ## Stage 12 — First-run warning
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#13](https://github.com/pedrobtz/py-zur/issues/13), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`. Linux only, verified in Actions.
 
@@ -663,7 +663,7 @@ does.
 
 ## Stage 13 — Licences and build info
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#14](https://github.com/pedrobtz/py-zur/issues/14), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`.
 
@@ -697,7 +697,7 @@ and `BUILD-INFO.json` names every input exactly.
 
 ## Stage 14 — Source mirror
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#15](https://github.com/pedrobtz/py-zur/issues/15), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`, plus one dispatch of the new workflow job to a draft
 GitHub release.
@@ -737,7 +737,7 @@ the wheels bundle is on a GitHub release of this repository (D15).
 
 ## Stage 15 — Versioning and release pipeline
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#16](https://github.com/pedrobtz/py-zur/issues/16), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `full — the pipeline runs the full profile before publishing.`
 Verified by rehearsals on TestPyPI.
@@ -794,7 +794,7 @@ from the index.
 
 ## Stage 16 — Benchmark and release gate
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#17](https://github.com/pedrobtz/py-zur/issues/17), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick` for the pull request; the workflow itself is verified by
 a dispatch against a TestPyPI rehearsal.
@@ -842,7 +842,7 @@ anti-goals in [§2](design.md#2-goals-non-goals-anti-goals).
 
 ## Stage 17 — README and wheel metadata
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#18](https://github.com/pedrobtz/py-zur/issues/18), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `quick`.
 
@@ -877,7 +877,7 @@ tests prove.
 
 ## Stage 18 — Review
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#19](https://github.com/pedrobtz/py-zur/issues/19), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `full`.
 
@@ -899,7 +899,7 @@ reviewed twice:
 
 ## Stage 19 — Release Linux x86_64
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#20](https://github.com/pedrobtz/py-zur/issues/20), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `full`, through `release.yml`, and `benchmark.yml` twice.
 
@@ -931,7 +931,7 @@ passed the release gate, and the README reports the measured speed.
 
 ## Stage 20 — Linux aarch64
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#21](https://github.com/pedrobtz/py-zur/issues/21), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `full — new platform leg on ubuntu-24.04-arm.` Verified in
 Actions only.
@@ -973,7 +973,7 @@ hashed graft of §6.2, as in stage 5.
 
 ## Stage 21 — macOS arm64
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#22](https://github.com/pedrobtz/py-zur/issues/22), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `full — macOS build and legs on macos-latest.` The build only
 needs `pkgutil` and can be tried on the maintainer's machine; the tests
@@ -1055,7 +1055,7 @@ installed on it with `installer`.
 
 ## Stage 22 — macOS x86_64
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#23](https://github.com/pedrobtz/py-zur/issues/23), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `full — macOS x86_64 leg on an Intel runner.` This is the one
 platform the maintainer can build and test locally, with framework R
@@ -1087,7 +1087,7 @@ platform the maintainer can build and test locally, with framework R
 
 ## Stage 23 — Windows x86_64
 
-**Issue.** #?, sub-issue of the parent.
+**Issue.** [#24](https://github.com/pedrobtz/py-zur/issues/24), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
 
 **CI.** `full — built on ubuntu-latest with innoextract, tested on
 windows-latest.` Not verifiable on the maintainer's machine.
