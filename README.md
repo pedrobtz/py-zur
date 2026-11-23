@@ -4,7 +4,7 @@ R, installable with pip and uv.
 
 ```sh
 uv tool install zur              # R and Rscript on your PATH
-uv tool install zur==4.5.3       # a specific R
+uv tool install 'zur==4.5.3.*'   # a specific R, in its newest build
 uvx --from zur Rscript -e 'sessionInfo()'
 ```
 
@@ -17,9 +17,11 @@ version.
 It repackages conda-forge's R builds, made relocatable so they run from
 wherever pip or uv unpacks them.
 
-**Status:** prototype. Not on PyPI yet. Only `linux-64` is built; see
-[`.agents/design.md`](.agents/design.md) for the design and the stages
-to macOS, Windows and a release.
+**Status:** prototype. Not on PyPI yet. Only `linux-64` is built, and
+what is described above is the prototype, not the plan. The design in
+[`.agents/design.md`](.agents/design.md) replaces it with a headless R
+for CI: built from source on Linux, taken from CRAN's binaries on macOS
+and Windows, without recommended packages or Tcl/Tk.
 
 ## Building
 

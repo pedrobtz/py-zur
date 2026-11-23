@@ -6,9 +6,13 @@ first, and update it when a decision or measurement changes.
 
 ## Current state
 
-Stage 1 of the design's §14: `scripts/build.py` builds a working
-`linux-64` wheel and `tests/test_installed.py` passes against it. The CI
-workflow `.github/workflows/build.yml` has not run yet.
+The design changed on 2026-11-23 and the code has not caught up. The
+design now describes a headless R: built from source on Linux, taken
+from CRAN's binaries on macOS and Windows. The code is still the first
+prototype (design §17): `scripts/build.py` repackages conda-forge's
+`r-base` into a working `linux-64` wheel and `tests/test_installed.py`
+passes against it. `.agents/roadmap.md` predates the new design and is
+to be rewritten from it once the design is approved.
 
 ## Commands
 
@@ -21,6 +25,10 @@ uv run ruff check . && uv run ruff format --check .
 ```
 
 ## Invariants that are easy to break
+
+These describe the prototype's build. The symlink and wheel-metadata
+rules carry over to the new design; the `unshare()` rule applies only
+while the build installs from rattler's cache.
 
 - `unshare()` must run before anything edits the prefix. rattler
   hardlinks files from its cache, so an in-place edit corrupts the cache
