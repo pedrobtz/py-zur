@@ -141,6 +141,20 @@ every later stage starts from a shuffled, gated suite.
 - The quick profile is green on the pull request.
 - Both gating behaviours above were seen in CI.
 
+**Deviations.** 2026-11-24:
+- `pack()` writes `License: GPL-2.0-or-later` (metadata 2.1); the field
+  becomes `License-Expression` in stage 13. The exit criterion is met
+  against the field `pack()` has now, and the check accepts either name.
+- `tests/test_unit.py` is not empty: a pytest run that collects nothing
+  exits 5 and fails the job, so it starts with the checks this stage
+  owes (the `LICENSE` text and the metadata's licence, and that the
+  suite is shuffled).
+- The full profile's gate is a `profile` job whose `full` output the
+  full jobs read (`needs: profile`, `if: needs.profile.outputs.full ==
+  'true'`); it has one placeholder job, `full`, until stage 10. Any
+  label change re-runs the workflow, and the concurrency group cancels
+  the run it replaces.
+
 **Design.** [§15 D7](design.md#15-decisions).
 
 ## Stage 3 — R from source in manylinux
