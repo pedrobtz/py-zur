@@ -217,6 +217,13 @@ is in text files. `relocate()` rewrites:
   `gfortran`.
 - **`etc/fonts/fonts.conf`**: the font directory, now
   `<dir prefix="relative">`.
+- **`lib/R/include/Rconfig.h`**: `HAVE_ENUM_BASE_TYPE` records that
+  conda-forge's gcc 16 supports C23 typed enums, but packages are
+  compiled by the user's compiler, and gcc before 13 rejects the
+  `enum : int` in `R_ext/Boolean.h`. CI found this with Debian 12's
+  gcc 12 and Rocky 8's gcc 8. The macro is now defined only for C++,
+  clang, final C23 (`__STDC_VERSION__ >= 202311L`) or gcc 13 and later.
+  `Rboolean` is int-sized either way, so the ABI is unchanged.
 
 Some libraries embed the prefix as a fallback (libcurl, OpenSSL,
 fontconfig, Kerberos, Tcl); the launcher's variables cover the ones R

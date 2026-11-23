@@ -154,6 +154,26 @@ def relocate(prefix, triplet):
         text = text.replace(f"{triplet}-{tool}", system)
     makeconf.write_text(text)
 
+    # Rconfig.h records what conda-forge's gcc 16 supported, but packages
+    # are compiled by the user's compiler. gcc before 13 rejects the C23
+    # typed enum R_ext/Boolean.h uses when HAVE_ENUM_BASE_TYPE is set, so
+    # decide per compiler. Rboolean is int-sized either way.
+    rconfig = prefix / "lib/R/include/Rconfig.h"
+    text = rconfig.read_text()
+    fixed = "#define HAVE_ENUM_BASE_TYPE 1\n"
+    if fixed not in text:
+        raise SystemExit("Rconfig.h: HAVE_ENUM_BASE_TYPE line changed upstream")
+    rconfig.write_text(
+        text.replace(
+            fixed,
+            "#if defined __cplusplus || defined __clang__ \\\n"
+            "  || (defined __STDC_VERSION__ && __STDC_VERSION__ >= 202311L) \\\n"
+            "  || (defined __GNUC__ && __GNUC__ >= 13)\n"
+            "#define HAVE_ENUM_BASE_TYPE 1\n"
+            "#endif\n",
+        )
+    )
+
     fonts = prefix / "etc/fonts/fonts.conf"
     if fonts.exists():
         text = fonts.read_text().replace(
