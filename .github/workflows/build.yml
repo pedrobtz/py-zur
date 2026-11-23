@@ -1,0 +1,71 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  R_VERSION: "4.5.3"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv run --only-group dev ruff check .
+      - run: uv run --only-group dev ruff format --check .
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - run: uv run scripts/build.py --r-version "$R_VERSION" --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-64
+          path: dist/*.whl
+          retention-days: 7
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:24.04", "debian:12", "rockylinux:8"]
+    container: ${{ matrix.image }}
+    steps:
+      # which: base R calls /usr/bin/which (design §12).
+      # gcc, make: building source packages. strace: the relocation test.
+      - name: System requirements
+        run: |
+          if command -v apt-get >/dev/null; then
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              ca-certificates curl gcc libc6-dev make strace
+          else
+            dnf install -y which gcc make strace tar gzip
+          fi
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-64
+          path: dist
+      - name: Install zur as a uv tool
+        run: |
+          uv tool install dist/zur-*.whl
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+      - name: Tests against the installed tool
+        env:
+          ZUR_R_VERSION: ${{ env.R_VERSION }}
+        run: uv run pytest -v
