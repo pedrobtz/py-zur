@@ -6,13 +6,10 @@ first, and update it when a decision or measurement changes.
 
 ## Current state
 
-The design changed on 2026-11-23 and the code has not caught up. The
-design now describes a headless R: built from source on Linux, taken
-from CRAN's binaries on macOS and Windows. The code is still the first
-prototype (design §17): `scripts/build.py` repackages conda-forge's
-`r-base` into a working `linux-64` wheel and `tests/test_installed.py`
-passes against it. `.agents/roadmap.md` gives the stages from here to
-the first release; stage 1 is the prototype, and none after it is done.
+`.agents/roadmap.md` is the plan from the prototype to the first release:
+its stage table says which stages are done, and each stage section says
+what comes next and how it is checked. CI runs the quick and full
+profiles described there (`.github/workflows/build.yml`).
 
 ## Commands
 
@@ -20,7 +17,8 @@ the first release; stage 1 is the prototype, and none after it is done.
 uv sync
 uv run scripts/build.py --r-version 4.5.3 --out dist   # about 1 minute
 uv tool install --reinstall dist/zur-4.5.3-py3-none-manylinux_2_28_x86_64.whl
-ZUR_R_VERSION=4.5.3 uv run pytest
+uv run pytest tests/test_unit.py                       # no build needed
+ZUR_R_VERSION=4.5.3 uv run pytest tests/test_installed.py
 uv run ruff check . && uv run ruff format --check .
 ```
 
@@ -43,9 +41,11 @@ while the build installs from rattler's cache.
 
 ## Tests
 
-Tests run against the installed tool, not the source tree, and compare
-against known answers. Add a check to `tests/test_installed.py` for any
-new behaviour.
+Every test compares against a known answer. The suite runs in a random
+order (`pytest-randomly`) and prints its seed; `--randomly-seed=<seed>`
+repeats an order. Checks that need no build go in `tests/test_unit.py`;
+checks against the installed tool, not the source tree, go in
+`tests/test_installed.py`. Add a check for any new behaviour.
 
 ## Commits and pull requests
 

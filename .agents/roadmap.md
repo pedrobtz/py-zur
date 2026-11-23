@@ -18,7 +18,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | Stage | Title | CI | Issue | Pull request | Done |
 | --- | --- | --- | --- | --- | --- |
 | 1 | [linux-64 wheel](#stage-1--linux-64-wheel) | quick | — | [#1](https://github.com/pedrobtz/py-zur/pull/1) | 2026-11-23 |
-| 2 | [Project identity and CI profiles](#stage-2--project-identity-and-ci-profiles) | quick | [#3](https://github.com/pedrobtz/py-zur/issues/3) | | |
+| 2 | [Project identity and CI profiles](#stage-2--project-identity-and-ci-profiles) | quick | [#3](https://github.com/pedrobtz/py-zur/issues/3) | [#27](https://github.com/pedrobtz/py-zur/pull/27) | 2026-11-24 |
 | 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | [#4](https://github.com/pedrobtz/py-zur/issues/4) | | |
 | 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | [#5](https://github.com/pedrobtz/py-zur/issues/5) | | |
 | 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | | |
@@ -72,7 +72,9 @@ R package profiles are replaced by two of its own, both in
   ([§16](design.md#16-open-questions) question 4), and Windows x86_64
   (built on `ubuntu-latest`, tested on `windows-latest`). macOS runners
   are shared with every other repository of the maintainer's, so a stage
-  that touches no platform code stays `quick`.
+  that touches no platform code stays `quick`. The label is read when
+  a run starts, so it takes effect on the next push or `gh run rerun`,
+  not on labelling (stage 2, 2026-11-24).
 
 A stage is `full` when it adds a platform, a leg that only the full
 profile runs, or code that only another platform's leg exercises.
@@ -140,6 +142,23 @@ every later stage starts from a shuffled, gated suite.
 - `LICENSE` exists and matches `License-Expression` in `pack()`.
 - The quick profile is green on the pull request.
 - Both gating behaviours above were seen in CI.
+
+**Deviations.** 2026-11-24:
+- `pack()` writes `License: GPL-2.0-or-later` (metadata 2.1); the field
+  becomes `License-Expression` in stage 13. The exit criterion is met
+  against the field `pack()` has now, and the check accepts either name.
+- `tests/test_unit.py` is not empty: a pytest run that collects nothing
+  exits 5 and fails the job, so it starts with the checks this stage
+  owes (the `LICENSE` text and the metadata's licence, and that the
+  suite is shuffled).
+- The full profile's gate is a `profile` job whose `full` output the
+  full jobs read (`needs: profile`, `if: needs.profile.outputs.full ==
+  'true'`); it has one placeholder job, `full`, until stage 10. Label
+  events do not start runs: a run on a label change replaces the checks
+  of the run before it, and skipping such runs showed a green-looking
+  `skipping` over real results (seen on #27). `profile` reads the pull
+  request's labels when it runs, so `full-ci` takes effect on the next
+  push or `gh run rerun`.
 
 **Design.** [§15 D7](design.md#15-decisions).
 

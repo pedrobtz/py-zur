@@ -1,9 +1,30 @@
 name: build
 
+# Two profiles (roadmap, "CI profiles"):
+#
+# - quick: every pull request and every push to main. Jobs with no
+#   profile condition are quick.
+# - full: quick plus every job gated on `needs.profile.outputs.full`.
+#   It runs when the pull request has the `full-ci` label, on the weekly
+#   schedule and on dispatch.
+#
+# Label events do not trigger runs: a run on a label change would replace
+# the checks of the run before it (the latest check of a name wins), and
+# skipping it would show a red run as skipped. The `profile` job reads
+# the pull request's labels when it runs instead, so after adding or
+# removing `full-ci`, push or re-run the workflow
+# (`gh run rerun <run-id>`) to switch profile.
+#
+# Documentation-only changes (Markdown, .agents/) skip the workflow.
+
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", ".agents/**"]
   pull_request:
+    paths-ignore: ["**.md", ".agents/**"]
+  schedule:
+    - cron: "17 4 * * 1" # Mondays 04:17 UTC
   workflow_dispatch:
 
 concurrency:
@@ -14,6 +35,39 @@ env:
   R_VERSION: "4.5.3"
 
 jobs:
+  profile:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      full: ${{ steps.pick.outputs.full }}
+    steps:
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          case "$EVENT" in
+            schedule|workflow_dispatch) full=true ;;
+            pull_request)
+              labels=$(gh pr view "$PR" --json labels --jq '.labels[].name')
+              if printf '%s\n' "$labels" | grep -qx full-ci; then
+                full=true
+              else
+                full=false
+              fi
+              ;;
+            *) full=false ;;
+          esac
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "Profile: $([ "$full" = true ] && echo full || echo quick)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Quick profile.
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -21,6 +75,14 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv run --only-group dev ruff check .
       - run: uv run --only-group dev ruff format --check .
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Build-free tests
+        run: uv run pytest -v tests/test_unit.py
 
   build:
     runs-on: ubuntu-latest
@@ -68,4 +130,16 @@ jobs:
       - name: Tests against the installed tool
         env:
           ZUR_R_VERSION: ${{ env.R_VERSION }}
-        run: uv run pytest -v
+        run: uv run pytest -v tests/test_installed.py
+
+  # Full profile. Every job here has `needs: profile` and
+  # `if: needs.profile.outputs.full == 'true'`. The host compiler matrix
+  # (stage 10) and the other platforms' legs (stages 20 to 23) join here;
+  # until then this placeholder shows the gate opening.
+
+  full:
+    needs: profile
+    if: needs.profile.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Full profile; no extra legs yet (roadmap stage 2)."

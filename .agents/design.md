@@ -660,6 +660,12 @@ library whose exact source cannot be identified is listed as such in
 `BUILD-INFO.json`, not left out silently. The README and
 `BUILD-INFO.json` point to the release.
 
+The repository's own `LICENSE` is the GNU GPL version 2 text as the FSF
+publishes it now (`gnu.org/licenses/old-licenses/gpl-2.0.txt`), the
+licence the wheel metadata names; `tests/test_unit.py` pins its SHA-256.
+2026-11-24, stage 2: the build scripts and launcher are distributed in
+every wheel next to R, so they carry R's licence.
+
 ## 15. Decisions
 
 - **D1. Hybrid runtime source.** Linux built from source; macOS and
