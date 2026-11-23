@@ -10,10 +10,9 @@
   (`pedrobtz/py-zur`); commands `R` and `Rscript`. `zur` was free on PyPI
   on 2026-11-23. Licence GPL-2.0-or-later, because the wheel
   redistributes R.
-- **Stages:** the order of work and its exit criteria belong in
-  [roadmap.md](roadmap.md), which still describes the prototype and is
-  to be rewritten from this design. §16 lists what the first step of
-  each platform's build must confirm.
+- **Stages:** the order of work and its exit criteria are in
+  [roadmap.md](roadmap.md). §16 lists what the first step of each
+  platform's build must confirm.
 
 ## 1. What zur is
 

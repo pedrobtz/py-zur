@@ -11,8 +11,8 @@ design now describes a headless R: built from source on Linux, taken
 from CRAN's binaries on macOS and Windows. The code is still the first
 prototype (design §17): `scripts/build.py` repackages conda-forge's
 `r-base` into a working `linux-64` wheel and `tests/test_installed.py`
-passes against it. `.agents/roadmap.md` predates the new design and is
-to be rewritten from it once the design is approved.
+passes against it. `.agents/roadmap.md` gives the stages from here to
+the first release; stage 1 is the prototype, and none after it is done.
 
 ## Commands
 
