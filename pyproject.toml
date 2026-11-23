@@ -1,0 +1,32 @@
+# Development environment for building zur wheels.
+#
+# This is not the zur distribution: scripts/build.py writes the wheel
+# itself, because it carries a whole R installation rather than Python
+# code (design §6). `uv sync` installs what the build and tests need.
+
+[project]
+name = "py-zur-build"
+version = "0"
+description = "Build tooling for the zur wheels"
+requires-python = ">=3.10"
+dependencies = [
+    "py-rattler>=0.29",
+    "pyelftools>=0.31",
+    "patchelf>=0.17; sys_platform == 'linux'",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
