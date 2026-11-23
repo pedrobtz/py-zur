@@ -44,14 +44,16 @@ jobs:
         image: ["ubuntu:24.04", "debian:12", "rockylinux:8"]
     container: ${{ matrix.image }}
     steps:
-      - name: System tools (compiler for the source-package test, strace)
+      # which: base R calls /usr/bin/which (design §12).
+      # gcc, make: building source packages. strace: the relocation test.
+      - name: System requirements
         run: |
           if command -v apt-get >/dev/null; then
             apt-get update
             apt-get install -y --no-install-recommends \
-              ca-certificates curl gcc libc6-dev strace
+              ca-certificates curl gcc libc6-dev make strace
           else
-            dnf install -y gcc strace tar gzip
+            dnf install -y which gcc make strace tar gzip
           fi
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

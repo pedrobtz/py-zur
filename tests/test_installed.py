@@ -51,6 +51,13 @@ def r_home():
     return Path(rout("R.home()"))
 
 
+def test_linux_system_requirements():
+    # Base R compiles the path /usr/bin/which into Sys.which, and utils
+    # calls it on load; without it, every package but base fails to load.
+    # Minimal RHEL-family images lack it (design §12).
+    assert Path("/usr/bin/which").exists(), "install the system 'which' package"
+
+
 def test_r_is_zur(r_home):
     assert r_home.parts[-4:] == ("zur", "_runtime", "lib", "R")
 
@@ -155,7 +162,10 @@ def test_install_pure_r_package(tmp_path):
     assert out.strip() == "pure"
 
 
-@pytest.mark.skipif(shutil.which("gcc") is None, reason="no system gcc")
+@pytest.mark.skipif(
+    shutil.which("gcc") is None or shutil.which("make") is None,
+    reason="source packages need the system gcc and make",
+)
 def test_install_c_package_with_system_compiler(tmp_path):
     lib = tmp_path / "lib"
     lib.mkdir()

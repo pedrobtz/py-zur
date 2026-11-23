@@ -265,12 +265,20 @@ signing (`codesign -s -`). Windows DLLs are not symlinked.
   wheel does not provide; packages without system dependencies are fine.
   Untested (stage 3).
 - **Source packages** compile with the system toolchain through the
-  rewritten `Makeconf`. conda-forge's compilers are not shipped.
+  rewritten `Makeconf`, so they need the system `make`, `gcc`, `g++` and
+  `gfortran`. conda-forge's compilers and `make` are not shipped.
 
 ## 12. Platforms
 
 - **Linux** (`linux-64`, `linux-aarch64`): `linux-64` works; aarch64
-  should behave the same.
+  should behave the same. System requirements: glibc 2.28 or later, and
+  `/usr/bin/which`, because base R compiles that path into `Sys.which`
+  and `utils` calls it on load. Without it every package except base
+  fails to load, which CI found on Rocky Linux 8's minimal image. Every
+  Linux R has the same dependency (Posit's RHEL builds require the
+  `which` package); removing it means patching `Sys.which` inside
+  `base.rdb` at build time (§16). Source packages also need `make` and
+  the compilers.
 - **macOS** (`osx-arm64`, `osx-64`): `@rpath` install names already
   relocate; the work is the `bin/R` rewrite, `install_name_tool`
   deduplication and ad-hoc signing. Tag `macosx_11_0`, because
@@ -341,3 +349,6 @@ about 140 MB is about 700 MB per R version.
 4. Offer `ir`'s maintainer `zur` as its R provider?
 5. Licensing: `BUILD-INFO.json` lists each package's licence; the
    licence texts themselves should ship under `zur/_runtime/licenses/`.
+6. Can the build patch base R's hardcoded `/usr/bin/which` (in
+   `base.rdb`) so `zur` runs on images without `which`? An
+   `Rprofile.site` override would not apply under `--vanilla`.
