@@ -72,7 +72,9 @@ R package profiles are replaced by two of its own, both in
   ([§16](design.md#16-open-questions) question 4), and Windows x86_64
   (built on `ubuntu-latest`, tested on `windows-latest`). macOS runners
   are shared with every other repository of the maintainer's, so a stage
-  that touches no platform code stays `quick`.
+  that touches no platform code stays `quick`. The label is read when
+  a run starts, so it takes effect on the next push or `gh run rerun`,
+  not on labelling (stage 2, 2026-11-24).
 
 A stage is `full` when it adds a platform, a leg that only the full
 profile runs, or code that only another platform's leg exercises.
@@ -151,9 +153,12 @@ every later stage starts from a shuffled, gated suite.
   suite is shuffled).
 - The full profile's gate is a `profile` job whose `full` output the
   full jobs read (`needs: profile`, `if: needs.profile.outputs.full ==
-  'true'`); it has one placeholder job, `full`, until stage 10. Any
-  label change re-runs the workflow, and the concurrency group cancels
-  the run it replaces.
+  'true'`); it has one placeholder job, `full`, until stage 10. Label
+  events do not start runs: a run on a label change replaces the checks
+  of the run before it, and skipping such runs showed a green-looking
+  `skipping` over real results (seen on #27). `profile` reads the pull
+  request's labels when it runs, so `full-ci` takes effect on the next
+  push or `gh run rerun`.
 
 **Design.** [§15 D7](design.md#15-decisions).
 
