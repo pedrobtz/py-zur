@@ -2,14 +2,16 @@ name: build
 
 # Two profiles (roadmap, "CI profiles"):
 #
-# - quick: every pull request and every push to main. Jobs with no
-#   profile condition are quick.
+# - quick: every pull request and every push to main. Every job needs
+#   `profile`; jobs with no other condition are quick.
 # - full: quick plus every job gated on `needs.profile.outputs.full`.
 #   It runs on the `full-ci` label, the weekly schedule and dispatch.
 #
-# Adding or removing a label re-runs the workflow, so taking `full-ci`
-# on or off a pull request switches its profile; the concurrency group
-# cancels the run it replaces.
+# Adding or removing `full-ci` re-runs the workflow in the new profile,
+# cancelling the run it replaces. Any other label event is a no-op: every
+# job skips (they all need `profile`), and it has its own concurrency
+# group, so it cancels nothing (opening a pull request with labels fires
+# `opened` and `labeled` together).
 #
 # Documentation-only changes (Markdown, .agents/) skip the workflow.
 
@@ -25,7 +27,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{ github.ref }}${{
+    (github.event.action == 'labeled' || github.event.action == 'unlabeled')
+    && github.event.label.name != 'full-ci'
+    && format('-label-{0}', github.event.label.name) || '' }}
   cancel-in-progress: true
 
 env:
@@ -33,6 +39,9 @@ env:
 
 jobs:
   profile:
+    if: >-
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled')
+      || github.event.label.name == 'full-ci'
     runs-on: ubuntu-latest
     outputs:
       full: ${{ steps.pick.outputs.full }}
@@ -54,6 +63,7 @@ jobs:
   # Quick profile.
 
   lint:
+    needs: profile
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,6 +72,7 @@ jobs:
       - run: uv run --only-group dev ruff format --check .
 
   unit:
+    needs: profile
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,6 +81,7 @@ jobs:
         run: uv run pytest -v -p no:randomly tests/test_unit.py
 
   build:
+    needs: profile
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
