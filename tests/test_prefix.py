@@ -32,8 +32,18 @@ R_VERSION = dict(
     if line and not line.startswith("#")
 )["R_VERSION"]
 
-# The compiler runtimes R's own libraries must not need (D17, §6.3).
-RUNTIMES = {"libgfortran.so.5", "libquadmath.so.0", "libgomp.so.1"}
+# D17's static Fortran runtime cannot be linked in the image (§18,
+# 2026-11-24), so R's own libraries need the shared one; stage 5 grafts
+# it under a hashed name. Until then the runtime may be needed by these
+# files only, and OpenMP's by none (--disable-openmp).
+FORTRAN_RUNTIME = {"libgfortran.so.5", "libquadmath.so.0"}
+FORTRAN_USERS = {
+    "lib/R/lib/libR.so",
+    "lib/R/lib/libRblas.so",
+    "lib/R/lib/libRlapack.so",
+    "lib/R/library/stats/libs/stats.so",
+    "lib/R/modules/lapack.so",
+}
 
 
 def rscript(code):
@@ -103,12 +113,12 @@ def scan():
     return json.loads(result.stdout)
 
 
-def test_no_shared_compiler_runtime():
+def test_compiler_runtimes_only_in_r_own_libraries():
     found = scan()
     # The scan must have read R's libraries, or finding nothing proves
     # nothing: libR.so needs R's BLAS and the C library.
     assert {"libRblas.so", "libc.so.6"} <= set(found["lib/R/lib/libR.so"])
-    assert {"lib/R/lib/libRblas.so", "lib/R/lib/libRlapack.so"} <= set(found)
     assert len(found) > 20
-    bad = {p: sorted(RUNTIMES & set(n)) for p, n in found.items()}
-    assert {p: n for p, n in bad.items() if n} == {}
+    assert {p: n for p, n in found.items() if "libgomp.so.1" in n} == {}
+    users = {p for p, n in found.items() if FORTRAN_RUNTIME & set(n)}
+    assert users == FORTRAN_USERS

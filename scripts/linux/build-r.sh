@@ -38,23 +38,17 @@ source_() {
   tar -xzf "$tarball" -C "$work"
 }
 
-# R links its shared libraries with the C driver, which ignores
-# -static-libgfortran, and passes the Fortran runtime as FLIBS
-# (-lgfortran ... -lquadmath). Naming the archives instead links the
-# toolset's static libgfortran and libquadmath into libRblas.so,
-# libRlapack.so, libR.so and stats.so (D17). The override is given to
-# make only, so the installed etc/Makeconf keeps configure's FLIBS for
-# packages, which use the machine's shared runtime (§6.3).
-static_flibs() {
-  sed -n 's/^FLIBS_IN_SO = //p' "$src/Makeconf" |
-    sed -e 's/-lgfortran\b/-l:libgfortran.a/' -e 's/-lquadmath\b/-l:libquadmath.a/'
-}
+# Fortran runtime (D17): R's libraries link the shared libgfortran.so.5
+# and libquadmath.so.0 that configure finds. The static link was tried
+# first and fails: the toolset's libgfortran.a(async.o) carries a
+# local-exec TLS relocation (R_X86_64_TPOFF32) that cannot go into
+# libRlapack.so (design §18, 2026-11-24). The fallback, the runtime
+# grafted under a hashed name for R's own libraries, is stage 5's
+# repair step.
 
 build() {
   cd "$src"
   echo "gfortran: $(gfortran --version | head -1)"
-  echo "libgfortran.a: $(gfortran -print-file-name=libgfortran.a)"
-  echo "libquadmath.a: $(gfortran -print-file-name=libquadmath.a)"
   start=$SECONDS
   # LIBnn=lib: R_HOME is $prefix/lib/R, as §6.3 names it, not lib64.
   LIBnn=lib ./configure --prefix="$prefix" \
@@ -66,14 +60,8 @@ build() {
     --with-internal-tzcode \
     --disable-openmp \
     --disable-java
-  flibs=$(static_flibs)
-  case "$flibs" in
-    *-l:libgfortran.a*) ;;
-    *) echo "FLIBS has no -lgfortran to make static: $flibs" >&2; exit 1 ;;
-  esac
-  echo "FLIBS for R's own libraries: $flibs"
-  make -j"$(nproc)" FLIBS="$flibs" FLIBS_IN_SO="$flibs"
-  make install FLIBS="$flibs" FLIBS_IN_SO="$flibs"
+  make -j"$(nproc)"
+  make install
   echo "R build time (configure, make, make install): $((SECONDS - start)) s"
 }
 
