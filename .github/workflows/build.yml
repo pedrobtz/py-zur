@@ -97,6 +97,40 @@ jobs:
           path: dist/*.whl
           retention-days: 7
 
+  # R 4.6.2 from source in the manylinux_2_28 image (roadmap stage 3,
+  # design §6.1, §6.2). The image is the one pinned by digest in
+  # scripts/linux/image; R is installed into /opt/zur inside it and
+  # tests/test_prefix.py runs there, in the same container.
+  r-source:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash # -eo pipefail, so a failure before `| tee` fails the step
+    env:
+      ZUR_PREFIX: /opt/zur
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the build container
+        run: |
+          image=$(grep -v '^#' scripts/linux/image)
+          echo "Image: $image" | tee -a "$GITHUB_STEP_SUMMARY"
+          docker run -d --name zur -e ZUR_PREFIX \
+            -v "$GITHUB_WORKSPACE:/io" -w /io "$image" sleep infinity
+      - name: Install build dependencies
+        run: docker exec zur scripts/linux/build-r.sh deps
+      - name: Fetch and verify the R tarball
+        run: docker exec zur scripts/linux/build-r.sh source
+      - name: Build R
+        run: |
+          docker exec zur scripts/linux/build-r.sh build 2>&1 | tee build-r.log
+          grep '^R build time' build-r.log | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: DT_NEEDED of every ELF file in the prefix
+        run: |
+          docker exec zur bash -c 'command -v uv || pipx install uv'
+          docker exec zur uv run --frozen scripts/elf_needed.py "$ZUR_PREFIX"
+      - name: Tests against the prefix
+        run: docker exec zur uv run --frozen pytest -v tests/test_prefix.py
+
   test:
     needs: build
     runs-on: ubuntu-latest
