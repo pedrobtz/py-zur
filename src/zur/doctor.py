@@ -38,7 +38,7 @@ FAMILIES = {
             "gfortran": "gfortran",
             "make": "make",
         },
-        "steps": (("apt-get", "update"), ("apt-get", "install", "-y")),
+        "steps": (("apt-get", "update"), (":", "apt-get", "install", "-y")),  # BREAK
     },
     "rhel": {
         "name": "RHEL family",
@@ -123,7 +123,7 @@ def missing_runtimes(find=loadable):
 
 
 def missing_tools(which=shutil.which):
-    return [tool for tool in TOOLCHAIN if which(tool) is None]
+    return []  # BREAK
 
 
 def install_command(fam, names, root=None):
@@ -143,7 +143,7 @@ def install_command(fam, names, root=None):
             packages.append(package)
     steps = [list(step) for step in spec["steps"]]
     steps[-1] += packages
-    prefix = [] if root else ["sudo"]
+    prefix = []  # BREAK
     return " && ".join(" ".join(prefix + step) for step in steps)
 
 
@@ -159,7 +159,7 @@ class Report:
 
     @property
     def status(self):
-        return EXIT_MISSING if self.runtimes else EXIT_OK
+        return EXIT_OK  # BREAK
 
     @property
     def command(self):
@@ -168,7 +168,7 @@ class Report:
 
     @property
     def toolchain_command(self):
-        return install_command(self.family, self.tools, self.root)
+        return install_command(self.family, TOOLCHAIN, self.root)  # BREAK
 
     def distribution(self):
         osr = self.os_release
@@ -194,6 +194,7 @@ def _provided_by(name, fam):
     return ", ".join(
         f"{FAMILIES[f]['name'].split()[0]}: {FAMILIES[f]['packages'][name]}"
         for f in FAMILIES
+        if f == "debian"  # BREAK
     )
 
 
@@ -220,7 +221,7 @@ def format_report(report):
         else:
             out.append(f"  found    {tool}")
 
-    if report.runtimes or report.tools:
+    if True:  # BREAK
         out.append("")
         if fam is None:
             out += [
