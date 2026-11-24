@@ -1,0 +1,123 @@
+name: bench-oneoff
+
+# One-off, informal speed comparison (not the stage 16 gate): the wheel
+# from a green main run against r-lib/actions/setup-r, both cold, five
+# fresh runners each. The wheel is downloaded before the clock starts,
+# so the PyPI download is not counted. Lives only on its own branch.
+
+on:
+  push:
+    branches: [bench-oneoff]
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  WHEEL_RUN: "45397765799"
+  WHEEL: zur-4.6.2-py3-none-manylinux_2_28_x86_64.whl
+
+jobs:
+  zur:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rep: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          run-id: ${{ env.WHEEL_RUN }}
+          github-token: ${{ github.token }}
+          path: wheel
+      - name: Start clock
+        run: echo "T0=$(date +%s.%N)" >> "$GITHUB_ENV"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+      - name: Install zur
+        run: uv tool install "wheel/$WHEEL"
+      - name: R ready
+        run: |
+          Rscript -e 1
+          echo "T1=$(date +%s.%N)" >> "$GITHUB_ENV"
+      - name: Package ready
+        env:
+          ZUR_NO_CHECK: "1"
+        run: |
+          Rscript -e 'install.packages("pak", repos = sprintf(
+            "https://r-lib.github.io/p/pak/stable/%s/%s/%s",
+            .Platform$pkgType, R.version$os, R.version$arch))'
+          Rscript -e 'pak::repo_add(CRAN = "PPM@latest"); pak::pkg_install("data.table")'
+          Rscript -e 'library(data.table)'
+          echo "T2=$(date +%s.%N)" >> "$GITHUB_ENV"
+      - name: Record
+        run: |
+          python3 -c "import json,os;t0,t1,t2=(float(os.environ[k]) for k in ('T0','T1','T2'));print(json.dumps({'case':'zur','rep':${{ matrix.rep }},'r_ready':round(t1-t0,1),'pkg_ready':round(t2-t0,1)}))" > zur-${{ matrix.rep }}.json
+          cat zur-${{ matrix.rep }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t-zur-${{ matrix.rep }}
+          path: zur-${{ matrix.rep }}.json
+
+  setup-r:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rep: [1, 2, 3, 4, 5]
+    steps:
+      - name: Start clock
+        run: echo "T0=$(date +%s.%N)" >> "$GITHUB_ENV"
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.6.2"
+          use-public-rspm: true
+      - name: R ready
+        run: |
+          Rscript -e 1
+          echo "T1=$(date +%s.%N)" >> "$GITHUB_ENV"
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: any::data.table
+          cache: false
+      - name: Package ready
+        run: |
+          Rscript -e 'library(data.table)'
+          echo "T2=$(date +%s.%N)" >> "$GITHUB_ENV"
+      - name: Record
+        run: |
+          python3 -c "import json,os;t0,t1,t2=(float(os.environ[k]) for k in ('T0','T1','T2'));print(json.dumps({'case':'setup-r','rep':${{ matrix.rep }},'r_ready':round(t1-t0,1),'pkg_ready':round(t2-t0,1)}))" > setup-r-${{ matrix.rep }}.json
+          cat setup-r-${{ matrix.rep }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t-setup-r-${{ matrix.rep }}
+          path: setup-r-${{ matrix.rep }}.json
+
+  summary:
+    needs: [zur, setup-r]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: t-*
+          merge-multiple: true
+          path: t
+      - name: Medians
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import glob, json, statistics
+          rows = [json.load(open(f)) for f in glob.glob("t/*.json")]
+          print("| case | n | R ready (median s) | package ready (median s) | runs (pkg ready) |")
+          print("| --- | --- | --- | --- | --- |")
+          for case in ("zur", "setup-r"):
+              r = [x for x in rows if x["case"] == case]
+              if not r:
+                  continue
+              print(f"| {case} | {len(r)} | {statistics.median(x['r_ready'] for x in r):.1f} "
+                    f"| {statistics.median(x['pkg_ready'] for x in r):.1f} "
+                    f"| {', '.join(str(x['pkg_ready']) for x in sorted(r, key=lambda x: x['rep']))} |")
+          EOF
+          cat "$GITHUB_STEP_SUMMARY"
