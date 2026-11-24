@@ -291,8 +291,9 @@ def test_user_library_set_by_the_user_wins(r_home, tmp_path, how):
 
 @pytest.mark.skipif(not os.environ.get("ZUR_WHEEL"), reason="needs ZUR_WHEEL")
 def test_user_library_survives_reinstall(r_home, tmp_path):
-    library = zur_library(Path.home())
-    assert Path(rout(".libPaths()[1]")) == library
+    # Whatever the default library is (test_user_library_is_zurs_own
+    # checks which), a package there outlives the tool's directory.
+    library = Path(rout(".libPaths()[1]"))
     pkg = _package(
         tmp_path,
         "zurkeep",
@@ -353,20 +354,20 @@ def in_container(image, wheel, home, code, read_only=False):
 def test_shared_home_keeps_one_library_per_distribution(unpacked_wheel, tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    expected = set()
-    for image, osid in SHARED_HOME_IMAGES.items():
+    outs = {}
+    for image in SHARED_HOME_IMAGES:
         result = in_container(image, unpacked_wheel, home, "cat(.libPaths()[1])")
         assert result.returncode == 0, result.stderr
-        platform, library = result.stdout.splitlines()
+        outs[image] = result.stdout.splitlines()  # [ID-VERSION_ID, library]
+    expected = {f"R/zur/x86_64-{platform}/{R_MINOR}" for platform, _ in outs.values()}
+    found = {str(p.relative_to(home)) for p in home.glob("R/zur/*/*")}
+    assert (len(found), found) == (2, expected)
+    assert sorted(p.name for p in home.iterdir()) == ["R"]
+    for image, osid in SHARED_HOME_IMAGES.items():
+        platform, library = outs[image]
         assert re.fullmatch(PLATFORMS[image], platform)
         assert platform.split("-")[0] == osid
-        rel = f"R/zur/x86_64-{platform}/{R_MINOR}"
-        assert library == f"/home/zur/{rel}"
-        expected.add(rel)
-    found = {str(p.relative_to(home)) for p in home.glob("R/zur/*/*")}
-    assert len(expected) == 2
-    assert found == expected
-    assert sorted(p.name for p in home.iterdir()) == ["R"]
+        assert library == f"/home/zur/R/zur/x86_64-{platform}/{R_MINOR}"
 
 
 @docker
