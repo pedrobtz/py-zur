@@ -1538,3 +1538,209 @@ def test_launcher_does_not_import_the_doctor():
 def test_build_copies_every_module_of_the_package():
     modules = sorted(p.name for p in (REPO / "src/zur").glob("*.py"))
     assert ["__init__.py", *build.MODULES] == modules
+
+
+# The RHEL family's package manager (#38) --------------------------------------
+
+
+def on_path(*programs):
+    return lambda name: f"/usr/bin/{name}" if name in programs else None
+
+
+@pytest.mark.parametrize(
+    ("programs", "expected"),
+    [
+        (("dnf", "microdnf"), "dnf"),
+        (("dnf",), "dnf"),
+        (("microdnf",), "microdnf"),  # rockylinux:8-minimal (#38)
+        ((), "dnf"),
+    ],
+)
+def test_doctor_rhel_command_uses_microdnf_without_dnf_38(tmp_path, programs, expected):
+    r = doctor.check(
+        doctor_release(tmp_path, "rockylinux:8"),
+        find=lambda lib: False,
+        which=on_path(*programs),
+        root=True,
+    )
+    assert r.manager == expected
+    assert r.command == f"{expected} install -y libgomp libgfortran"
+    assert r.toolchain_command == (
+        f"{expected} install -y gcc gcc-c++ gcc-gfortran make"
+    )
+
+
+def test_doctor_debian_command_ignores_microdnf_38(tmp_path):
+    r = doctor.check(
+        doctor_release(tmp_path, "debian:12"),
+        find=lambda lib: False,
+        which=on_path("microdnf"),
+        root=False,
+    )
+    assert r.command == (
+        "sudo apt-get update && sudo apt-get install -y libgomp1 libgfortran5"
+    )
+
+
+# First-run warning (roadmap stage 12, design §6.5) -----------------------------
+#
+# The launcher's first_run() with a doctor whose check() is fixed; the
+# note's text is doctor.first_run_note(). In containers: test_installed.py.
+
+
+def first_run_doctor(tmp_path, name="debian:12", runtimes=doctor.RUNTIMES, **kw):
+    """A stand-in for zur.doctor whose check() counts its calls."""
+    import types
+
+    calls = []
+
+    def check():
+        calls.append(1)
+        if kw.get("fail"):
+            raise RuntimeError("broken check")
+        return report(tmp_path, name, runtimes, root=kw.get("root", True))
+
+    fake = types.SimpleNamespace(
+        check=check, first_run_note=doctor.first_run_note, calls=calls
+    )
+    return fake
+
+
+def first_run(env, fake, platform="linux"):
+    stream = io.StringIO()
+    launcher.first_run(env, doctor=fake, stream=stream, platform=platform)
+    return stream.getvalue()
+
+
+DEBIAN_NOTE = (
+    "zur: binary R packages need libraries this machine lacks:"
+    " libgomp.so.1, libgfortran.so.5\n"
+    "zur: to install them, run:"
+    " apt-get update && apt-get install -y libgomp1 libgfortran5\n"
+    "zur: run zur doctor for details; this note is printed once"
+    " (ZUR_NO_CHECK=1 turns it off)\n"
+)
+
+
+def test_first_run_stamp_path():
+    path = launcher.stamp_path
+    assert path({"HOME": "/home/u"}, "4.6.2") == "/home/u/R/zur/first-run-4.6.2"
+    assert path({"HOME": "/home/u/"}, "4.6.2") == "/home/u/R/zur/first-run-4.6.2"
+    assert path({"HOME": "/"}, "4.6.2") == "/R/zur/first-run-4.6.2"
+    assert path({"HOME": ""}, "4.6.2") is None
+    assert path({}, "4.6.2") is None
+    # The build replaces the version placeholder (scripts/build.py).
+    assert path({"HOME": "/h"}) == f"/h/R/zur/first-run-{launcher.__version__}"
+
+
+def test_first_run_prints_the_note_once(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    fake = first_run_doctor(tmp_path)
+    env = {"HOME": str(home)}
+    assert first_run(env, fake) == DEBIAN_NOTE
+    stamp = Path(launcher.stamp_path(env))
+    assert stamp.parent == home / "R/zur"
+    assert stamp.read_text() == "libgomp.so.1\nlibgfortran.so.5\n"
+    assert first_run(env, fake) == ""
+    assert len(fake.calls) == 1
+
+
+def test_first_run_note_for_one_missing_library_as_a_user(tmp_path):
+    fake = first_run_doctor(
+        tmp_path, "rockylinux:8", runtimes=["libgfortran.so.5"], root=False
+    )
+    lines = first_run({"HOME": str(tmp_path)}, fake).splitlines()
+    assert lines[:2] == [
+        "zur: binary R packages need libraries this machine lacks: libgfortran.so.5",
+        "zur: to install them, run: sudo dnf install -y libgfortran",
+    ]
+
+
+def test_first_run_note_on_an_unrecognised_distribution(tmp_path):
+    fake = first_run_doctor(tmp_path, "alpine", runtimes=["libgomp.so.1"])
+    assert first_run({"HOME": str(tmp_path)}, fake).splitlines()[1] == (
+        "zur: no install command for this distribution;"
+        " zur doctor names the packages that provide them"
+    )
+
+
+def test_first_run_with_nothing_missing_is_silent_and_stamped(tmp_path):
+    fake = first_run_doctor(tmp_path, runtimes=())
+    env = {"HOME": str(tmp_path)}
+    assert first_run(env, fake) == ""
+    assert Path(launcher.stamp_path(env)).read_text() == ""
+    assert first_run(env, fake) == "" and len(fake.calls) == 1
+
+
+@pytest.mark.parametrize("value", ["1", "yes", "0"])
+def test_first_run_disabled_by_zur_no_check(tmp_path, value):
+    fake = first_run_doctor(tmp_path)
+    env = {"HOME": str(tmp_path), "ZUR_NO_CHECK": value}
+    assert first_run(env, fake) == ""
+    assert fake.calls == [] and not (tmp_path / "R").exists()
+    # Empty counts as unset.
+    assert first_run({**env, "ZUR_NO_CHECK": ""}, fake) == DEBIAN_NOTE
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes a read-only directory")
+def test_first_run_with_a_read_only_home_is_silent(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o555)
+    fake = first_run_doctor(tmp_path)
+    try:
+        assert first_run({"HOME": str(home)}, fake) == ""
+    finally:
+        home.chmod(0o755)
+    assert fake.calls == [] and list(home.iterdir()) == []
+
+
+def test_first_run_with_home_a_file_or_unset_is_silent(tmp_path):
+    home = tmp_path / "file"
+    home.write_text("")
+    fake = first_run_doctor(tmp_path)
+    assert first_run({"HOME": str(home)}, fake) == ""
+    assert first_run({}, fake) == "" and first_run({"HOME": ""}, fake) == ""
+    assert fake.calls == []
+
+
+def test_first_run_stamp_of_another_version_does_not_suppress_it(tmp_path):
+    env = {"HOME": str(tmp_path)}
+    other = tmp_path / "R/zur/first-run-4.6.1"
+    other.parent.mkdir(parents=True)
+    other.write_text("")
+    fake = first_run_doctor(tmp_path)
+    assert first_run(env, fake) == DEBIAN_NOTE
+    names = sorted(p.name for p in other.parent.iterdir())
+    assert names == sorted(["first-run-4.6.1", f"first-run-{launcher.__version__}"])
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_first_run_only_on_linux(tmp_path, platform):
+    fake = first_run_doctor(tmp_path)
+    assert first_run({"HOME": str(tmp_path)}, fake, platform=platform) == ""
+    assert fake.calls == [] and list(tmp_path.iterdir()) == []
+
+
+def test_first_run_survives_a_failing_check(tmp_path):
+    fake = first_run_doctor(tmp_path, fail=True)
+    env = {"HOME": str(tmp_path)}
+    assert first_run(env, fake) == ""
+    # Stamped anyway: the check ran, whatever its result.
+    assert Path(launcher.stamp_path(env)).exists()
+
+
+def test_launcher_checks_before_starting_r(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        launcher, "first_run", lambda env: events.append(("check", env))
+    )
+    monkeypatch.setattr(
+        launcher.os, "execve", lambda exe, argv, env: events.append(("exec", env))
+    )
+    monkeypatch.setattr(launcher.sys, "argv", ["Rscript", "-e", "1"])
+    monkeypatch.setenv("R_HOME", "/other/R")
+    launcher.Rscript()
+    assert [e[0] for e in events] == ["check", "exec"]
+    assert events[0][1] is events[1][1] and "R_HOME" not in events[1][1]

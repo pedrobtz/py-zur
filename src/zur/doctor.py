@@ -11,7 +11,7 @@ The command to install what is missing is printed for the detected
 distribution family (``FAMILIES``); zur never runs it. This module
 imports nothing from the ``zur`` package, so the tests load it from the
 source tree, and its check (``check()``) stays cheap enough for the
-launcher's first-run warning (stage 12).
+launcher's first-run warning (``first_run_note()``, design §6.5).
 """
 
 import os
@@ -25,8 +25,10 @@ RUNTIMES = ("libgomp.so.1", "libgfortran.so.5")
 # What `R CMD INSTALL` runs for C, C++ and Fortran sources (D5).
 TOOLCHAIN = ("gcc", "g++", "gfortran", "make")
 
-# Per family: the package providing each runtime and tool, and the
-# install command as steps joined by `&&` (one line, design §6.5).
+# Per family: the package providing each runtime and tool, the package
+# managers (the first on PATH is used, else the first), and the install
+# command's steps after the manager, joined by `&&` (one line, design
+# §6.5). The RHEL family's minimal images have microdnf and no dnf (#38).
 FAMILIES = {
     "debian": {
         "name": "Debian family",
@@ -38,7 +40,8 @@ FAMILIES = {
             "gfortran": "gfortran",
             "make": "make",
         },
-        "steps": (("apt-get", "update"), ("apt-get", "install", "-y")),
+        "managers": ("apt-get",),
+        "steps": (("update",), ("install", "-y")),
     },
     "rhel": {
         "name": "RHEL family",
@@ -50,7 +53,8 @@ FAMILIES = {
             "gfortran": "gcc-gfortran",
             "make": "make",
         },
-        "steps": (("dnf", "install", "-y"),),
+        "managers": ("dnf", "microdnf"),
+        "steps": (("install", "-y"),),
     },
 }
 
@@ -126,22 +130,31 @@ def missing_tools(which=shutil.which):
     return [tool for tool in TOOLCHAIN if which(tool) is None]
 
 
-def install_command(fam, names, root=None):
+def package_manager(fam, which=shutil.which):
+    """The family's first package manager on PATH, else its first."""
+    managers = FAMILIES[fam]["managers"]
+    return next((m for m in managers if which(m) is not None), managers[0])
+
+
+def install_command(fam, names, root=None, manager=None):
     """The one-line install command for ``names`` (files or tools), or ``""``.
 
     ``sudo`` prefixes every step only when the user is not root.
+    ``manager`` defaults to ``package_manager(fam)``.
     """
     if fam is None or not names:
         return ""
     if root is None:
         root = os.geteuid() == 0
+    if manager is None:
+        manager = package_manager(fam)
     spec = FAMILIES[fam]
     packages = []
     for name in names:
         package = spec["packages"][name]
         if package not in packages:
             packages.append(package)
-    steps = [list(step) for step in spec["steps"]]
+    steps = [[manager, *step] for step in spec["steps"]]
     steps[-1] += packages
     prefix = [] if root else ["sudo"]
     return " && ".join(" ".join(prefix + step) for step in steps)
@@ -150,12 +163,15 @@ def install_command(fam, names, root=None):
 class Report:
     """What ``zur doctor`` found; ``check()`` makes one."""
 
-    def __init__(self, os_release, runtimes, tools, root):
+    def __init__(self, os_release, runtimes, tools, root, manager=None):
         self.os_release = os_release
         self.family = family(os_release)
         self.runtimes = runtimes
         self.tools = tools
         self.root = root
+        if manager is None and self.family is not None:
+            manager = FAMILIES[self.family]["managers"][0]
+        self.manager = manager
 
     @property
     def status(self):
@@ -164,11 +180,11 @@ class Report:
     @property
     def command(self):
         """The line installing the first group's missing libraries."""
-        return install_command(self.family, self.runtimes, self.root)
+        return install_command(self.family, self.runtimes, self.root, self.manager)
 
     @property
     def toolchain_command(self):
-        return install_command(self.family, self.tools, self.root)
+        return install_command(self.family, self.tools, self.root, self.manager)
 
     def distribution(self):
         osr = self.os_release
@@ -185,7 +201,11 @@ def check(os_release=None, find=loadable, which=shutil.which, root=None):
         os_release = read_os_release()
     if root is None:
         root = os.geteuid() == 0
-    return Report(os_release, missing_runtimes(find), missing_tools(which), root)
+    fam = family(os_release)
+    manager = package_manager(fam, which) if fam else None
+    return Report(
+        os_release, missing_runtimes(find), missing_tools(which), root, manager
+    )
 
 
 def _provided_by(name, fam):
@@ -231,6 +251,28 @@ def format_report(report):
             out += ["To install what binary packages need, run:", f"  {report.command}"]
         if report.toolchain_command:
             out += ["To compile source packages, run:", f"  {report.toolchain_command}"]
+    return "\n".join(out) + "\n"
+
+
+def first_run_note(report):
+    """The launcher's first-run note (design §6.5), or ``""``."""
+    if not report.runtimes:
+        return ""
+    out = [
+        "zur: binary R packages need libraries this machine lacks: "
+        + ", ".join(report.runtimes)
+    ]
+    if report.command:
+        out.append(f"zur: to install them, run: {report.command}")
+    else:
+        out.append(
+            "zur: no install command for this distribution;"
+            " zur doctor names the packages that provide them"
+        )
+    out.append(
+        "zur: run zur doctor for details; this note is printed once"
+        " (ZUR_NO_CHECK=1 turns it off)"
+    )
     return "\n".join(out) + "\n"
 
 

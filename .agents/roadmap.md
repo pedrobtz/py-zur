@@ -28,7 +28,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | [#10](https://github.com/pedrobtz/py-zur/issues/10) | [#35](https://github.com/pedrobtz/py-zur/pull/35) | 2026-11-24 |
 | 10 | [Source packages across host compilers](#stage-10--source-packages-across-host-compilers) | full | [#11](https://github.com/pedrobtz/py-zur/issues/11) | [#36](https://github.com/pedrobtz/py-zur/pull/36) | 2026-11-24 |
 | 11 | [zur doctor](#stage-11--zur-doctor) | quick | [#12](https://github.com/pedrobtz/py-zur/issues/12) | [#37](https://github.com/pedrobtz/py-zur/pull/37) | 2026-11-24 |
-| 12 | [First-run warning](#stage-12--first-run-warning) | quick | [#13](https://github.com/pedrobtz/py-zur/issues/13) | | |
+| 12 | [First-run warning](#stage-12--first-run-warning) | quick | [#13](https://github.com/pedrobtz/py-zur/issues/13) | [#39](https://github.com/pedrobtz/py-zur/pull/39) | 2026-11-24 |
 | 13 | [Licences and build info](#stage-13--licences-and-build-info) | quick | [#14](https://github.com/pedrobtz/py-zur/issues/14) | | |
 | 14 | [Source mirror](#stage-14--source-mirror) | quick | [#15](https://github.com/pedrobtz/py-zur/issues/15) | | |
 | 15 | [Versioning and release pipeline](#stage-15--versioning-and-release-pipeline) | full | [#16](https://github.com/pedrobtz/py-zur/issues/16) | | |
@@ -980,6 +980,34 @@ does.
   in the prototype).
 - Quick profile green.
 
+**Deviations.** 2026-11-24:
+- Bug [#38](https://github.com/pedrobtz/py-zur/issues/38) is fixed in
+  the same pull request (coordinator's brief): on the RHEL family `zur
+  doctor` prints `microdnf install -y …` where `dnf` is not on `PATH`
+  (design §6.5). The doctor job gains a `rockylinux-8-minimal` leg that
+  runs the printed line and the "runtimes" checks after it; the
+  installed-tool tests' expected line follows the same rule, so
+  `test-linux-x86_64`'s `rockylinux:8-minimal` checks it too.
+- The first-run checks run in the doctor job, in every leg and state
+  (`ZUR_DOCTOR`), not only `debian:12-slim` and the full image; each
+  uses a fresh home.
+- The read-only home is a root-owned directory of mode 0555 used by
+  uid 65534 from the root container, not a read-only mount: the home
+  job's containers run R without the launcher, which needs Python. A
+  writable home for the same user is the control (the note, with
+  `sudo`).
+- Every other installed-tool check now starts R with `ZUR_NO_CHECK=1`
+  (set in `tests/test_installed.py`), since the test order is random
+  and many compare stderr.
+- Added beyond the list: `R` prints the note too; `$R_HOME/bin/R` never
+  does; the stamp's content; and in `tests/test_unit.py` the stamp path,
+  `ZUR_NO_CHECK` values, a home that is a file or unset, other
+  platforms, a failing check, the note's text per family, and that the
+  launcher checks before it execs R.
+- The start cost is measured by `scripts/start_cost.py` in the doctor
+  job's `debian-12-slim` and `ubuntu-24.04-full` legs (job summary).
+- The stamp format and the other readings are recorded in design §6.5.
+
 **Design.** [§6.5](design.md#65-zur-doctor), [§15 D11](design.md#15-decisions).
 
 ## Stage 13 — Licences and build info
@@ -1506,7 +1534,7 @@ Each test of [§13](design.md#13-how-it-is-tested) and where it lands:
 | Network and data | 5, 6 |
 | Relocation | 5; 21 |
 | Build checks | 5, 9; 21, 23 |
-| Containers | 5, 6, 11 |
+| Containers | 5, 6, 11, 12 |
 
 Each decision of [§15](design.md#15-decisions) that needs work:
 

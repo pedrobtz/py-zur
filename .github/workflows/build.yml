@@ -343,6 +343,9 @@ jobs:
   # the §6.6 recipe (P3M's bookworm index has none, §18.2); rockylinux:9
   # loads its RcppArmadillo, which links libflexiblas.so.3, without and
   # then with the host's flexiblas. debian:12-slim stops after "missing".
+  # rockylinux:8-minimal has microdnf and no dnf (#38): the line must
+  # install the runtimes there too. The first-run warning (stage 12) is
+  # checked in each state, and its start cost measured in two legs.
   doctor-linux-x86_64:
     needs: build-linux-x86_64
     if: ${{ !inputs.pango }}
@@ -356,6 +359,7 @@ jobs:
           - { case: debian-13-slim, image: "debian:13-slim", start: missing }
           - { case: rockylinux-8, image: "rockylinux:8", start: missing }
           - { case: rockylinux-9, image: "rockylinux:9", start: missing }
+          - { case: rockylinux-8-minimal, image: "rockylinux:8-minimal", start: missing }
           - { case: ubuntu-24.04-runtimes, image: "ubuntu:24.04", start: runtimes }
           - { case: ubuntu-24.04-full, image: "ubuntu:24.04", start: full }
     # rockylinux:9's image declares no PATH, so the runner's PATH would be
@@ -372,6 +376,7 @@ jobs:
       - name: Starting state
         run: |
           case "$CASE" in
+            rockylinux-8-minimal) microdnf install -y tar gzip ;;
             rockylinux-*) dnf install -y tar gzip ;;
             ubuntu-24.04-runtimes)
               apt-get update
@@ -395,7 +400,12 @@ jobs:
       - name: zur doctor (${{ matrix.start }})
         run: |
           zur doctor || true
-          ZUR_DOCTOR=${{ matrix.start }} uv run pytest -v tests/test_installed.py -k doctor
+          ZUR_DOCTOR=${{ matrix.start }} uv run pytest -v tests/test_installed.py \
+            -k "doctor or first_run"
+      # Design §5: what the launcher and its first-run check add to a start.
+      - name: Launcher start cost
+        if: matrix.case == 'debian-12-slim' || matrix.case == 'ubuntu-24.04-full'
+        run: uv run scripts/start_cost.py | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Run the line zur doctor --command prints
         if: matrix.start == 'missing' && matrix.case != 'debian-12-slim'
         run: |
@@ -407,15 +417,17 @@ jobs:
         if: matrix.case == 'debian-13-slim'
         run: apt-get install -y --no-install-recommends ca-certificates
       - name: zur doctor after the line, and the pak recipe
-        if: matrix.case == 'debian-13-slim' || matrix.case == 'rockylinux-8'
+        if: >-
+          matrix.case == 'debian-13-slim' || matrix.case == 'rockylinux-8'
+          || matrix.case == 'rockylinux-8-minimal'
         run: |
-          k="doctor"
+          k="doctor or first_run"
           [ "$CASE" = debian-13-slim ] && k="$k or pak_recipe_installs"
           ZUR_DOCTOR=runtimes ZUR_PAK=1 uv run pytest -v tests/test_installed.py -k "$k"
       - name: zur doctor after the line, and the BLAS shim without flexiblas
         if: matrix.case == 'rockylinux-9'
         run: |
-          k="doctor or pak_recipe_installs or flexiblas"
+          k="doctor or first_run or pak_recipe_installs or flexiblas"
           ZUR_DOCTOR=runtimes ZUR_PAK=1 ZUR_FLEXIBLAS=absent \
             uv run pytest -v tests/test_installed.py -k "$k"
       # Also after a failure of the step before: it checks something else.

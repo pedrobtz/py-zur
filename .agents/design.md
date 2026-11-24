@@ -193,7 +193,14 @@ zur-4.6.2.dist-info/
   exit codes and the terminal are R's. On Windows, where `execve` does
   not replace the process, it runs R as a child and passes its exit
   code and Ctrl-C through. Cost measured in the prototype: 17 ms per
-  start.
+  start. Measured again 2026-11-24 (stage 12, `scripts/start_cost.py`,
+  median of 21 interleaved `Rscript -e 1` starts against
+  `$R_HOME/bin/Rscript`, on `ubuntu-latest` in containers,
+  [run](https://github.com/pedrobtz/py-zur/actions/runs/45366292911)):
+  the launcher adds 11.6 ms (`ubuntu:24.04` with the toolchain) and
+  13.4 ms (`debian:12-slim`) once the first-run stamp exists, the same
+  as with `ZUR_NO_CHECK=1` (11.6 and 12.8 ms), and 21.8 and 24.8 ms on
+  the first start, which runs the check.
 - **Environment lives in R's own files, not the launcher.** On POSIX
   the settings below and those of §6.4 are written into `bin/R` (the
   front-end script the build already edits, which `Rscript`, `R CMD`
@@ -590,7 +597,12 @@ Decided 2026-11-24 (stage 11), within the behaviour above:
 - **Command.** One line, its steps joined by `&&`, each prefixed with
   `sudo` when the effective user is not root: `apt-get update &&
   apt-get install -y <packages>` (a fresh container has no package
-  lists) or `dnf install -y <packages>`. `--command` prints the line
+  lists) or `dnf install -y <packages>`. On the RHEL family the command
+  is `dnf` when it is on `PATH`, else `microdnf` when that is, else
+  `dnf`: `rockylinux:8-minimal` and the other minimal RHEL images ship
+  `microdnf` alone, and `microdnf install -y <packages>` installs both
+  runtimes there (2026-11-24, stage 12,
+  [#38](https://github.com/pedrobtz/py-zur/issues/38)). `--command` prints the line
   for the first group only, or nothing when nothing is missing, so the
   `eval` never installs a compiler; the report prints a second line for
   the toolchain. On an unrecognised distribution `--command` prints
@@ -625,6 +637,35 @@ without them, so the warning never changes the exit status.
 - The warning lives in the launcher only. R started directly through
   `$R_HOME/bin/R` (child processes, `R CMD`) does not check, which is
   accepted for a one-time hint.
+
+Decided 2026-11-24 (stage 12), within the behaviour above:
+
+- **Stamp.** `~/R/zur/first-run-<zur version>` (for example
+  `first-run-4.6.2`), a file beside the platform directories of §5, with
+  `~` read as for the user library (`$HOME` without a trailing slash;
+  `HOME` unset or empty: no check). Its content is the missing file
+  names, one per line (empty when nothing was missing); only its
+  existence is read. The launcher creates `~/R/zur` and the stamp
+  (exclusively) before the check, so a stamp it cannot create means no
+  check and no message. A stamp of another zur version is ignored. One
+  stamp serves every distribution a shared home is used from, as the
+  bullet above says ("named for the zur version").
+- **Order.** `R_HOME` is dropped, the check runs, then R is started;
+  the check reads the environment R will get. Any exception in the
+  check is swallowed: a hint never keeps R from starting.
+- **`ZUR_NO_CHECK`.** Any non-empty value disables the check (empty
+  counts as unset, as for `R_LIBS_USER`), and no stamp is written, so a
+  later start without it still checks.
+- **Note.** Three lines on stderr, each starting `zur: `: the missing
+  file names; `to install them, run: <the --command line>` (or, on an
+  unrecognised distribution, that `zur doctor` names the packages); and
+  `run zur doctor for details; this note is printed once
+  (ZUR_NO_CHECK=1 turns it off)`. Nothing when nothing is missing. The
+  text is `doctor.first_run_note()`, the stamp logic `first_run()` in
+  the launcher.
+
+These are the roadmap's readings where the design is silent; the
+maintainer may decide otherwise.
 
 ### 6.6 Packages: `pak` is the documented route
 
@@ -952,7 +993,14 @@ Tests run against the installed tool and compare against known answers:
 - **First-run warning:** in a minimal container the first `Rscript -e
   1` prints the note on stderr and exits 0, and the second prints
   nothing; with `ZUR_NO_CHECK=1` the first prints nothing; on a full
-  image stderr is empty.
+  image stderr is empty. Also (2026-11-24, stage 12): `R` prints it
+  too; a read-only home gets no note and R exits 0, while the same user
+  with a writable home gets it with `sudo`; a stamp of another version
+  does not suppress it; `$R_HOME/bin/Rscript` and `$R_HOME/bin/R` never
+  print it. Every other installed-tool check starts R with
+  `ZUR_NO_CHECK=1`, as a job comparing stderr would. `zur doctor
+  --command`'s line installs the runtimes in `rockylinux:8-minimal`
+  (`microdnf`, #38).
 - **Graphics headless:** `png()` and `pdf()` each write a file with
   the right magic bytes, including non-ASCII text, with no `DISPLAY`;
   `svg()` likewise on Linux and Windows, and on macOS once XQuartz is
@@ -1012,8 +1060,9 @@ the system profile `library/base/R/Rprofile` (§6.4).
   Maintainer, 2026-11-23 (approach C, §4).
 - **D2. Name `zur`.** Short, free on PyPI, no collision with `rlang`,
   `renv`, `box` or conda-forge's `r-base`.
-- **D3. Launcher: Python console scripts.** 17 ms per start, identical
-  on every platform.
+- **D3. Launcher: Python console scripts.** 17 ms per start in the
+  prototype, 12 to 13 ms on Linux with the first-run check in place
+  (§5, 2026-11-24), identical on every platform.
 - **D4. Linux tag `manylinux_2_28`.** RHEL 8 and Ubuntu 20.04 onward.
 - **D5. No compiler in the wheel.** Source packages use the machine's
   toolchain; `Makeconf` names plain `gcc`, `g++`, `gfortran` on Linux.

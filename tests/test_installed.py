@@ -22,6 +22,10 @@ which install into the user library from the network, in a container
 with no compiler. ZUR_COMPILERS=1 (the compiler matrix) requires gcc,
 g++, gfortran and make for the fixture packages and runs the MASS check
 on Ubuntu 24.04.
+
+R's first-run note (design §6.5) would make the first start of each
+home print to stderr, so every check here starts R with ZUR_NO_CHECK=1,
+as a job comparing stderr would; the first-run checks remove it.
 """
 
 import os
@@ -29,6 +33,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
@@ -59,6 +64,9 @@ CA_CANDIDATES = [
 ]
 
 CONTAINER = os.environ.get("ZUR_CONTAINER", "")
+
+# See the docstring; test_first_run_* start R without it.
+os.environ.setdefault("ZUR_NO_CHECK", "1")
 
 
 def lines(path):
@@ -642,7 +650,6 @@ RUNTIME_PACKAGES = {
     "debian": ["libgomp1", "libgfortran5"],
     "rhel": ["libgomp", "libgfortran"],
 }
-INSTALL = {"debian": "apt-get update && apt-get install -y", "rhel": "dnf install -y"}
 TOOLS = ["gcc", "g++", "gfortran", "make"]
 
 
@@ -665,6 +672,22 @@ def installed(package):
     return run(["rpm", "-q", package]).returncode == 0
 
 
+def install_line(packages, root=None):
+    """The line zur doctor should print for ``packages`` on this host.
+
+    The RHEL family uses dnf, or microdnf where only that exists
+    (rockylinux:8-minimal, #38).
+    """
+    if host_family() == "debian":
+        line = f"apt-get update && apt-get install -y {' '.join(packages)}"
+    else:
+        manager = "dnf" if shutil.which("dnf") else "microdnf"
+        line = f"{manager} install -y {' '.join(packages)}"
+    if root is None:
+        root = os.getuid() == 0
+    return line if root else " && ".join(f"sudo {s}" for s in line.split(" && "))
+
+
 def assert_doctor_output(result):
     # Whatever the case: zur never mentions a BLAS (D16 covers RHEL 9's).
     assert "flexiblas" not in (result.stdout + result.stderr).lower()
@@ -685,9 +708,7 @@ def test_doctor_agrees_with_the_package_manager():
         assert re.search(rf"^  {state}  {re.escape(file)}\b", report.stdout, re.M)
     command = zur("doctor", "--command")
     assert command.returncode == report.returncode
-    line = f"{INSTALL[fam]} {' '.join(absent)}" if absent else ""
-    if line and os.getuid() != 0:
-        line = " && ".join(f"sudo {step}" for step in line.split(" && "))
+    line = install_line(absent) if absent else ""
     assert command.stdout == (line + "\n" if line else "")
 
 
@@ -717,7 +738,7 @@ def test_doctor_names_the_missing_runtimes():
     for file, package in zip(files, packages, strict=True):
         assert f"  missing  {file:<16}  ({package})\n" in report.stdout
     if os.getuid() == 0:
-        line = f"{INSTALL[fam]} {' '.join(packages)}"
+        line = install_line(packages)
         assert f"\n  {line}\n" in report.stdout
         assert zur("doctor", "--command").stdout == line + "\n"
     # R itself needs neither.
@@ -727,8 +748,7 @@ def test_doctor_names_the_missing_runtimes():
 @doctor_case("missing")
 @pytest.mark.skipif(os.getuid() != 0, reason="starts the doctor as another user")
 def test_doctor_command_has_sudo_only_when_not_root():
-    fam = host_family()
-    line = f"{INSTALL[fam]} {' '.join(bare_absent()[1])}"
+    line = install_line(bare_absent()[1], root=True)
     as_root = zur("doctor", "--command")
     assert as_root.stdout == line + "\n"
     assert not as_root.stdout.startswith("sudo")
@@ -737,8 +757,7 @@ def test_doctor_command_has_sudo_only_when_not_root():
         [exe, "doctor", "--command"], user=65534, group=65534, extra_groups=[]
     )
     assert as_user.returncode == 1, as_user.stderr
-    sudo = " && ".join(f"sudo {step}" for step in line.split(" && "))
-    assert as_user.stdout == sudo + "\n"
+    assert as_user.stdout == install_line(bare_absent()[1], root=False) + "\n"
 
 
 @doctor_case("missing")
@@ -787,6 +806,143 @@ def test_doctor_on_a_full_image_has_nothing_to_install():
     assert "run:" not in report.stdout
     command = zur("doctor", "--command")
     assert (command.returncode, command.stdout) == (0, "")
+
+
+# First-run warning (design §6.5, roadmap stage 12) --------------------------
+#
+# Each check starts R through the launcher with a fresh home and without
+# ZUR_NO_CHECK, in the doctor job's states: "missing" (the note is
+# expected; bare_absent() and the package manager know what it names),
+# "runtimes" and "full" (nothing to say).
+
+NOBODY = 65534
+
+
+def first_run_env(home, **extra):
+    base = dict(os.environ, HOME=str(home))
+    return without("ZUR_NO_CHECK", "R_HOME", base=base) | extra
+
+
+def zur_version():
+    out = run(["uv", "tool", "list"]).stdout
+    return re.search(r"^zur v(\S+)", out, flags=re.M)[1]
+
+
+def stamps(home):
+    return sorted(p.name for p in (home / "R/zur").glob("first-run-*"))
+
+
+def expected_note(root=True):
+    files, packages = bare_absent()
+    return (
+        "zur: binary R packages need libraries this machine lacks: "
+        + ", ".join(files)
+        + "\n"
+        + f"zur: to install them, run: {install_line(packages, root)}\n"
+        + "zur: run zur doctor for details; this note is printed once"
+        + " (ZUR_NO_CHECK=1 turns it off)\n"
+    )
+
+
+# R, not Rscript: `R -s -e` through the same launcher.
+R_CAT_ONE = ["R", "-s", "-e", "cat(1)"]
+
+
+def r_one(env, exe="Rscript", **kwargs):
+    result = run([exe, "-e", "1"], env=env, **kwargs)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "[1] 1\n"  # R itself is unchanged
+    return result
+
+
+@doctor_case("missing")
+def test_first_run_prints_the_note_once(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    env = first_run_env(home)
+    assert r_one(env).stderr == expected_note()
+    assert stamps(home) == [f"first-run-{zur_version()}"]
+    stamp = home / "R/zur" / f"first-run-{zur_version()}"
+    assert stamp.read_text() == "".join(f"{f}\n" for f in bare_absent()[0])
+    assert r_one(env).stderr == ""
+    assert run(R_CAT_ONE, env=env).stderr == ""
+
+
+@doctor_case("missing")
+def test_first_run_note_from_r_too(tmp_path):
+    result = run(R_CAT_ONE, env=first_run_env(tmp_path))
+    assert (result.returncode, result.stdout) == (0, "1")
+    assert result.stderr == expected_note()
+
+
+@doctor_case("missing")
+def test_first_run_disabled_by_zur_no_check(tmp_path):
+    env = first_run_env(tmp_path, ZUR_NO_CHECK="1")
+    assert r_one(env).stderr == ""
+    assert stamps(tmp_path) == []
+    # The same home without it: this machine does have something to say.
+    assert r_one(first_run_env(tmp_path)).stderr == expected_note()
+
+
+@pytest.mark.skipif(
+    DOCTOR not in ("runtimes", "full"), reason="needs ZUR_DOCTOR=runtimes or full"
+)
+def test_first_run_is_silent_when_nothing_is_missing(tmp_path):
+    assert r_one(first_run_env(tmp_path)).stderr == ""
+    # The check ran: its stamp lists nothing missing.
+    stamp = tmp_path / "R/zur" / f"first-run-{zur_version()}"
+    assert stamp.read_text() == ""
+
+
+@doctor_case("missing")
+def test_first_run_stamp_of_another_version_does_not_suppress_it(tmp_path):
+    other = tmp_path / "R/zur/first-run-0.0.1"
+    other.parent.mkdir(parents=True)
+    other.write_text("")
+    assert r_one(first_run_env(tmp_path)).stderr == expected_note()
+    assert stamps(tmp_path) == sorted([other.name, f"first-run-{zur_version()}"])
+
+
+@doctor_case("missing")
+def test_first_run_never_from_r_home_bin(tmp_path, r_home):
+    # R started without the launcher does not check (design §6.5).
+    env = first_run_env(tmp_path)
+    for argv in (["Rscript", "-e", "cat(1)"], R_CAT_ONE):
+        result = run([str(r_home / "bin" / argv[0]), *argv[1:]], env=env)
+        assert (result.returncode, result.stdout, result.stderr) == (0, "1", "")
+    assert stamps(tmp_path) == []
+    assert r_one(env).stderr == expected_note()
+
+
+@doctor_case("missing")
+@pytest.mark.skipif(os.getuid() != 0, reason="starts R as another user")
+@pytest.mark.parametrize("writable", [False, True])
+def test_first_run_with_a_read_only_home(writable):
+    # A home the user cannot write (root's, mode 0555): R starts, nothing is
+    # printed, nothing written. The writable control, owned by the user,
+    # gets the note, with sudo.
+    home = Path(tempfile.mkdtemp(prefix="zur-home-", dir="/tmp"))
+    try:
+        if writable:
+            os.chown(home, NOBODY, NOBODY)
+        else:
+            home.chmod(0o555)
+        result = r_one(
+            first_run_env(home),
+            exe=shutil.which("Rscript"),
+            user=NOBODY,
+            group=NOBODY,
+            extra_groups=[],
+            cwd="/tmp",
+        )
+        if writable:
+            assert result.stderr == expected_note(root=False)
+            assert stamps(home) == [f"first-run-{zur_version()}"]
+        else:
+            assert result.stderr == ""
+            assert list(home.iterdir()) == []
+    finally:
+        shutil.rmtree(home)
 
 
 # Base R ----------------------------------------------------------------------
