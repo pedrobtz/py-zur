@@ -54,8 +54,8 @@ uv run ruff check . && uv run ruff format --check .
   copies and `pack()` refuses any left.
 - `src/zur/__init__.py` is copied into the wheel; its `__version__`
   placeholder `"0+unknown"` is replaced by the build. The launcher sets
-  only `R_HOME` and `RHOME`; other environment goes in R's own `bin/R`
-  (design §5, D13).
+  no R variable: it only drops an inherited `R_HOME`. `bin/Rscript` sets
+  `RHOME`; other environment goes in R's own `bin/R` (design §5, D13).
 - The repository's `pyproject.toml` is the build environment, not the
   `zur` distribution. Wheel metadata lives in `pack()`.
 
