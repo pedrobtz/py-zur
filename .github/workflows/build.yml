@@ -358,7 +358,12 @@ jobs:
           - { case: rockylinux-9, image: "rockylinux:9", start: missing }
           - { case: ubuntu-24.04-runtimes, image: "ubuntu:24.04", start: runtimes }
           - { case: ubuntu-24.04-full, image: "ubuntu:24.04", start: full }
-    container: ${{ matrix.image }}
+    # rockylinux:9's image declares no PATH, so the runner's PATH would be
+    # only what the actions add (no sh).
+    container:
+      image: ${{ matrix.image }}
+      env:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     env:
       ZUR_CONTAINER: ${{ matrix.image }}
       CASE: ${{ matrix.case }}
