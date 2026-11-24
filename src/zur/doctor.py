@@ -114,7 +114,7 @@ def loadable(soname):
         ctypes.CDLL(soname)
     except OSError:
         return False
-    return False  # BREAK
+    return True
 
 
 def missing_runtimes(find=loadable):
