@@ -50,18 +50,23 @@ build() {
   cd "$src"
   echo "gfortran: $(gfortran --version | head -1)"
   start=$SECONDS
+  # TEMPORARY (seen failing, reverted before merge): each line below
+  # breaks one check of tests/test_prefix.py.
+  echo 4.6.9 > VERSION            # test_version_string
+  dnf install -y pango-devel      # test_cairo_without_pango
   # LIBnn=lib: R_HOME is $prefix/lib/R, as §6.3 names it, not lib64.
   LIBnn=lib ./configure --prefix="$prefix" \
     --enable-R-shlib --enable-memory-profiling \
     --without-x --without-tcltk --without-aqua \
     --without-recommended-packages \
-    --with-cairo --with-libpng --with-jpeglib --with-libtiff \
+    --with-cairo --with-libpng --with-jpeglib --without-libtiff \
     --with-readline --with-pcre2 --with-ICU \
     --with-internal-tzcode \
-    --disable-openmp \
     --disable-java
   make -j"$(nproc)"
   make install
+  rm -rf "$prefix/lib/R/library/splines"   # test_base_packages_and_no_recommended
+  mv "$prefix/lib/R/lib/libRlapack.so" "$prefix/lib/R/lib/libRlapack.so.off"  # LAPACK tests
   echo "R build time (configure, make, make install): $((SECONDS - start)) s"
 }
 
