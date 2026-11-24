@@ -22,7 +22,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | [#4](https://github.com/pedrobtz/py-zur/issues/4) | [#28](https://github.com/pedrobtz/py-zur/pull/28) | 2026-11-24 |
 | 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | [#5](https://github.com/pedrobtz/py-zur/issues/5) | [#29](https://github.com/pedrobtz/py-zur/pull/29) | 2026-11-24 |
 | 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | [#30](https://github.com/pedrobtz/py-zur/pull/30) | 2026-11-24 |
-| 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | | |
+| 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | [#31](https://github.com/pedrobtz/py-zur/pull/31) | 2026-11-24 |
 | 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | | |
 | 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | | |
 | 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | [#10](https://github.com/pedrobtz/py-zur/issues/10) | | |
