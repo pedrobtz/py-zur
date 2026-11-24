@@ -232,6 +232,28 @@ glibc is the one the wheel tag promises. Dependencies come from the
 image's `-devel` packages where their versions are adequate, otherwise
 built from pinned sources in the same container.
 
+`manifests/linux.toml` names each of them: version, origin (an
+AlmaLinux 8 package at an exact `[epoch:]version-release`, or a source
+tarball by URL and SHA-256), SPDX licence, the SONAMEs it provides, and
+why the image's version is adequate or why it is built. Decided
+2026-11-24 (stage 4):
+
+- **Built from source:** OpenSSL 3.5 (the current LTS series; the
+  image's 1.1.1k is past upstream end of life) and libcurl 8.x with
+  OpenSSL and zlib only, into `/opt/zur-deps`. They face the network,
+  and §16 question 2 tracks them for rebuilds. OPENSSLDIR is
+  `/etc/ssl`, and libcurl has no CA path compiled in: certificates come
+  from the system through `bin/R` (§6.4).
+- **From the image:** zlib, bzip2, xz, PCRE2, ICU, readline, cairo,
+  fontconfig, freetype, libpng, libjpeg-turbo and libtiff. Each meets
+  R-admin's minimum version, and R uses each on local data only.
+- `dnf` installs exactly the pinned versions and the build refuses any
+  other; every tarball, R's included, is verified before any is
+  unpacked.
+- R is configured with `CPPFLAGS` and `LDFLAGS` naming only
+  `/opt/zur-deps`, replacing `configure`'s default `/usr/local` paths:
+  the image keeps builds there that are no pinned input.
+
 ### 6.2 `configure`
 
 Checked against Posit's `r-builds` options and a survey of P3M
@@ -544,7 +566,10 @@ wheels of about 50 MB each.
   releases follow each R patch release. A back-catalogue from 4.4.0 is
   after the first release.
 - **Pinned inputs:** R source tarball and CRAN installers by SHA-256,
-  dependency versions in a committed manifest per platform.
+  dependency versions in a committed manifest per platform
+  (`manifests/linux.toml` from stage 4, §6.1). `BUILD-INFO.json`'s
+  `inputs` section repeats them: R's tarball and SHA-256, the image by
+  digest, and every manifest entry.
 - **R-devel** stays off PyPI.
 
 ## 12. Speed benchmark
@@ -749,7 +774,8 @@ not a decision.
      a new decision.
    - Windows: `innoextract` 1.9 unpacks the installer. If not, the
      silent install of §8.
-2. **Rebuild policy.** The Linux wheel bundles libcurl and OpenSSL.
+2. **Rebuild policy.** The Linux wheel bundles libcurl and OpenSSL
+   (built from source since 2026-11-24, stage 4: §6.1).
    Default: a scheduled workflow checks the libraries in
    `BUILD-INFO.json` against published advisories and opens an issue;
    the maintainer decides on a `.postN`; only the newest patch release

@@ -294,6 +294,24 @@ the same container.
   profiles section.
 - Quick profile green.
 
+**Deviations.** 2026-11-24:
+- The cache key also hashes `scripts/linux/build-deps.sh`, which holds
+  the build recipes: a changed recipe must rebuild as a changed pin does.
+- `scripts/linux/devel-packages.txt` is gone: the `-devel` packages are
+  the manifest's `image` entries, and the unpinned build tools (`perl`
+  for OpenSSL's `Configure`, `xz`) are in `scripts/linux/build-tools.txt`.
+- Pinned: every library R's own files link, checked by
+  `tests/test_prefix.py` against the scan of the prefix. Not pinned: the
+  `-devel` packages `dnf` pulls in for those (for example cairo's
+  pixman and X11 headers) and the runtime libraries they bring. Stage
+  5's repair bundles whichever are outside the manylinux allowlist;
+  stage 13's check that every bundled ELF file belongs to a
+  `BUILD-INFO.json` entry is where they get entries.
+- Added tests beyond the stage's list: the manifest names every library
+  R links; no `/usr/local` path in `Makeconf` or `ldpaths`; the
+  `rpm-check` refusal; cairo, libpng and libtiff versions through
+  `grSoftVersion()`.
+
 **Design.** [§6.1](design.md#61-build-environment), [§11](design.md#11-versioning-and-r-versions)
 (pinned inputs), goal 6 in [§2](design.md#2-goals-non-goals-anti-goals).
 

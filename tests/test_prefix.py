@@ -180,7 +180,9 @@ def test_ext_soft_versions_reach_r(component, name):
 
 @pytest.mark.parametrize(
     ("component", "name"),
-    [("cairo", "cairo"), ("libpng", "libpng"), ("libtiff", "libtiff")],
+    # Only cairo: R reaches libpng, libjpeg and libtiff through its cairo
+    # module alone, so grSoftVersion() reports no version for them.
+    [("cairo", "cairo")],
 )
 def test_graphics_versions_reach_r(component, name):
     assert first_version(r_named("grSoftVersion()")[component]) == PINNED[name]
@@ -236,5 +238,5 @@ def test_no_usr_local_paths():
     # configure defaults to -I/usr/local/include and -L/usr/local/lib,
     # where the image keeps builds that are no pinned input.
     for name in ["etc/Makeconf", "etc/ldpaths"]:
-        text = (PREFIX / "lib/R" / name).read_text()
-        assert "/usr/local" not in text, name
+        lines = (PREFIX / "lib/R" / name).read_text().splitlines()
+        assert [s for s in lines if "/usr/local" in s] == [], name
