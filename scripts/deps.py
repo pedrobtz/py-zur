@@ -241,7 +241,7 @@ def rpm_files():
     (tsflags=nodocs) is still in the database.
     """
     result = subprocess.run(
-        ["rpm", "-qa", "--qf", "[%{FILENAMES}\\t%{NAME}\\n]"],
+        ["rpm", "-qa", "--qf", "[%{FILENAMES}\\t%{=NAME}\\n]"],
         capture_output=True,
         text=True,
         check=True,
