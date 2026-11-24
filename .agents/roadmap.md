@@ -24,7 +24,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | [#30](https://github.com/pedrobtz/py-zur/pull/30) | 2026-11-24 |
 | 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | [#31](https://github.com/pedrobtz/py-zur/pull/31) | 2026-11-24 |
 | 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | [#32](https://github.com/pedrobtz/py-zur/pull/32) | 2026-11-24 |
-| 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | | |
+| 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | [#33](https://github.com/pedrobtz/py-zur/pull/33) | 2026-11-24 |
 | 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | [#10](https://github.com/pedrobtz/py-zur/issues/10) | | |
 | 10 | [Source packages across host compilers](#stage-10--source-packages-across-host-compilers) | full | [#11](https://github.com/pedrobtz/py-zur/issues/11) | | |
 | 11 | [zur doctor](#stage-11--zur-doctor) | quick | [#12](https://github.com/pedrobtz/py-zur/issues/12) | | |
@@ -664,6 +664,27 @@ confirmation, without `repo_add()`, built `data.table` from source.
   depend on the answer.
 - Every **Tests.** line exists and was seen to fail.
 - Quick profile green.
+
+**Deviations.** 2026-11-24:
+- The recipe changed with the new D9 (design §15): `PAK_RECIPE` in
+  `tests/recipes.py` adds `pak::repo_add(CRAN = "PPM@latest")` before
+  `pkg_install()`; `pak_install()` there builds the same call for the
+  binary set and `xml2`. Added test beyond the stage's list:
+  `getOption("repos")` is `@CRAN@` before and after the recipe (D9).
+- The checks run in a job of their own, `pak-linux-x86_64`
+  (`ubuntu:24.04`, `debian:13`, `rockylinux:8`), gated by `ZUR_PAK=1`,
+  which installs the host runtimes (`ca-certificates libgomp1
+  libgfortran5` with apt; `libgomp libgfortran tar gzip` with dnf) and
+  no compiler. `debian:13` is in no other job, so that job also runs
+  the R start, CA bundle, HTTPS and user-library checks there.
+- The BLAS user is `RcppArmadillo` (design §18.2); every package of the
+  set is also checked to be a P3M binary (pak's `RemotePkgPlatform` and
+  `RemoteRepos`). The `/proc/self/maps` check lists every BLAS or
+  LAPACK library mapped besides R's own `libRblas.so` and
+  `libRlapack.so`, since the kernel names a symlinked system BLAS by
+  its target.
+- Quick profile with the pak job: 6 min 32 s from start to the last job
+  ([run](https://github.com/pedrobtz/py-zur/actions/runs/45332854896)).
 
 > Note 2026-11-24: `debian:12` is not in the pak job. P3M's bookworm
 > index lacks `data.table` (§18.2), so the recipe compiles from source

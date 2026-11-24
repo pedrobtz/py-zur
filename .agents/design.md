@@ -1146,3 +1146,26 @@ compiler in the container:
 - On 2026-11-24 `4.6-trixie` held 25,538 packages, with `data.table`,
   `RcppArmadillo` and `xml2`; the pak job and the benchmark's slim case
   use Debian 13.
+
+**Binary set (stage 8).** Chosen by reading `DT_NEEDED` of the P3M
+binaries for R 4.6 on Ubuntu 24.04 (noble, 2026-11-24); known answers in
+`BINARY_SET` of `tests/test_installed.py`:
+
+| Package | Covers | `DT_NEEDED` beyond `libR.so` and glibc |
+| --- | --- | --- |
+| `jsonlite` 2.0.0 | plain C | none |
+| `Rcpp` 1.1.2 | C++ | `libstdc++.so.6`, `libgcc_s.so.1` |
+| `deSolve` 1.42 | Fortran | `libblas.so.3`, `libgfortran.so.5` |
+| `data.table` 1.18.6.1 | OpenMP | `libgomp.so.1`, `libz.so.1` |
+| `RcppArmadillo` 15.8.0-1 | BLAS and LAPACK | `liblapack.so.3`, `libblas.so.3`, `libgomp.so.1`, `libstdc++.so.6`, `libgcc_s.so.1` |
+
+`RcppArmadillo` is the BLAS user: it needs both reference names and only
+`Rcpp` besides. The others read were `robustbase` (both names; imports
+`DEoptimR`), `quantreg` (both names; needs `Matrix`, `survival`, which
+are recommended packages zur does not ship), `nloptr` and `xml2`
+(neither name). Its process maps `libblas.so.3` and `liblapack.so.3`
+from `R.home("lib")` (D16), and `data.table::getDTthreads()` is 2 on a
+4-core runner with the host's `libgomp` (D17). As root on Ubuntu,
+`pak::pkg_install("xml2")` installs `libxml2` with apt. Green run:
+https://github.com/pedrobtz/py-zur/actions/runs/45332854896; pak job
+39 to 57 s per container.
