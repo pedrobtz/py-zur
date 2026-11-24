@@ -206,8 +206,9 @@ def relocate_makeconf(path, prefix, deps):
     text = re.sub(
         r"^(\w+ = )/\S*/(gcc|g\+\+|gfortran|cpp)(?=\s|$)", r"\1\2", text, flags=re.M
     )
-    # D17: R is built without OpenMP; packages use the host's.
-    for lang in ["C", "CXX", "FC", "F"]:
+    # D17: R is built without OpenMP; packages use the host's. (Fortran
+    # has one variable, FFLAGS, for fixed and free form.)
+    for lang in ["C", "CXX", "F"]:
         text, n = re.subn(
             rf"^SHLIB_OPENMP_{lang}FLAGS =.*$",
             f"SHLIB_OPENMP_{lang}FLAGS = -fopenmp",

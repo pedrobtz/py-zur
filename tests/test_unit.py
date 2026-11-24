@@ -534,7 +534,6 @@ FC = gfortran
 LDFLAGS = -L/opt/zur-deps/lib
 SHLIB_OPENMP_CFLAGS =
 SHLIB_OPENMP_CXXFLAGS =
-SHLIB_OPENMP_FCFLAGS =
 SHLIB_OPENMP_FFLAGS =
 LIBR = -L"$(R_HOME)/lib" -lR
 rincludedir = /opt/zur/lib/R/include
@@ -551,7 +550,7 @@ def test_makeconf_relocated(tmp_path):
     assert "\nCC = gcc -std=gnu2x\n" in text
     assert "\nCXX = g++ -std=gnu++20\n" in text
     assert "\nCPPFLAGS =\n" in text and "\nLDFLAGS =\n" in text
-    for lang in ["C", "CXX", "FC", "F"]:
+    for lang in ["C", "CXX", "F"]:
         assert f"\nSHLIB_OPENMP_{lang}FLAGS = -fopenmp\n" in text
     assert "\nrincludedir = $(R_HOME)/../../lib/R/include\n" in text
     assert "'CPPFLAGS=-I<deps>/include'" in text and "'--prefix=<prefix>'" in text
