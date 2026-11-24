@@ -869,7 +869,8 @@ Tests run against the installed tool and compare against known answers:
   (gcc 8, Rocky Linux 8), the newest in a current distribution, and
   one in between, each covering C, C++ and Fortran. The default-standard
   C++ fixture is never skipped and reports `__cplusplus`: `201703` on
-  gcc 8, `202002` on gcc 10 onward. The newest-standard fixture runs
+  gcc 8, `201709` on gcc 10 (its C++20 is pre-final), `202002` on
+  gcc 11 onward. The newest-standard fixture runs
   where the host's `g++` accepts that flag and is skipped elsewhere,
   with the gcc version in the reason.
 - **`zur doctor`:** in a minimal container it names `libgomp1` and
