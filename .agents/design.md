@@ -1124,3 +1124,18 @@ https://github.com/pedrobtz/py-zur/actions/runs/45329772193:
   `repos` setting. D9 was restated on that basis (2026-11-24): the
   recipe of §6.6 makes that setting itself, and zur makes none.
 
+
+**With `repo_add(CRAN = "PPM@latest")` (the recipe of §6.6, D9 as
+restated).** In run
+https://github.com/pedrobtz/py-zur/actions/runs/45331374753, with no
+compiler in the container:
+
+- Ubuntu 24.04 and Rocky Linux 8: `data.table` installs as a P3M binary
+  and gives its known answer.
+- Debian 12: pak reports `Got data.table 1.18.6.1 (source)` and fails
+  with "Could not find tools necessary to compile a package". P3M lists
+  bookworm with binaries, but its `4.6-bookworm` index (16,181 packages,
+  against 25,629 for `4.6-noble`) has no `data.table`, `RcppArmadillo`
+  or `xml2`. Its `4.5-bookworm` index has had no `data.table` since at
+  least 2026-10-01; the 2026-06-01 snapshot had 1.18.4. Trixie's
+  `4.6` index has `data.table`.

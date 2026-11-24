@@ -470,8 +470,7 @@ def test_pak_recipe_installs_a_p3m_binary(pak_recipe):
 def test_pak_leaves_repos_as_base_r_sets_it(pak_recipe):
     # D9: zur sets no repository, before the recipe or after it; repo_add()
     # lasted for the recipe's own session only.
-    before, result = pak_recipe
-    assert result.returncode == 0, result.stdout + result.stderr
+    before, _ = pak_recipe
     assert before == "CRAN @CRAN@"
     assert plain_rscript(REPOS).stdout == "CRAN @CRAN@"
 
