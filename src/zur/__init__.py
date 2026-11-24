@@ -26,10 +26,6 @@ def environment(base=None):
     """
     env = dict(os.environ if base is None else base)
     env.pop("R_HOME", None)
-    # TEMPORARY (#8): the user library set here, inside the tool.
-    if not env.get("R_LIBS_USER"):
-        env["R_LIBS_USER"] = str(RUNTIME / "user-library")
-        (RUNTIME / "user-library").mkdir(parents=True, exist_ok=True)
     return env
 
 

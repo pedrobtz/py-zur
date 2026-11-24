@@ -197,9 +197,7 @@ def front_end_zur(r_version, arch=ARCH):
     minor = ".".join(r_version.split(".")[:2])
     if not re.fullmatch(r"\d+\.\d+", minor):
         raise SystemExit(f"R version {r_version!r}: no major.minor")
-    # TEMPORARY (#8): the library in the launcher, inside the tool.
-    text = FRONT_END_ZUR[: FRONT_END_ZUR.index("## zur (design §5, D10)")]
-    return text.replace("@ARCH@", arch).replace("@R_MINOR@", minor)
+    return FRONT_END_ZUR.replace("@ARCH@", arch).replace("@R_MINOR@", minor)
 
 
 def relocate_front_end(path, prefix, home_from_script, r_version):
