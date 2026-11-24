@@ -659,6 +659,11 @@ installs a P3M binary, with no `repos` or user-agent setting.
   this stage stops, the maintainer decides a new D9 in the design, and
   stages 16 and 17 are revised before they start. Stages 9 to 15 do not
   depend on the answer.
+
+**Stopped.** 2026-11-24: the confirmation does not hold. pak 0.11.2
+resolves base R's `@CRAN@` to `https://cran.rstudio.com` and builds
+`data.table` from source in both containers (design §18.2). D9 is
+reopened for the maintainer; the rest of this stage waits for the new D9.
 - Every **Tests.** line exists and was seen to fail.
 - Quick profile green.
 
