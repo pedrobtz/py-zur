@@ -29,8 +29,9 @@ uv tool run --from zur Rscript file.R
 Two settings, in order of priority:
 
 1. **CI/CD pipelines.** A job installs `zur` and runs `Rscript file.R`.
-   Packages come from `pak`, which is the documented route (§6.6): it
-   picks binary packages and installs their system requirements.
+   Packages come from `pak`, which is the documented route (§6.6): with
+   P3M added, it picks binary packages and installs their system
+   requirements.
    `install.packages()` works as on any R, which under `Rscript` means
    the script must name a repository itself.
 2. **Remote editor sessions** (code-server, VS Code remote): someone
@@ -562,15 +563,17 @@ uv tool install 'zur==4.6.2.*'
 Rscript -e 'install.packages("pak", repos = sprintf(
   "https://r-lib.github.io/p/pak/stable/%s/%s/%s",
   .Platform$pkgType, R.version$os, R.version$arch))'
-Rscript -e 'pak::pkg_install("data.table")'
+Rscript -e 'pak::repo_add(CRAN = "PPM@latest"); pak::pkg_install("data.table")'
 ```
 
-`pak` is expected to select P3M binaries for the running distribution
-without any `repos` or user-agent setting, and to install
-package-declared system requirements when it can. Both are to be
-confirmed on a zur-built R (§13). If `pak` does not pick binaries
-there, D9 is reopened, because goal 1 cannot be met by compiling from
-source.
+`pak` alone resolves `@CRAN@` to a source-only mirror (§18.2).
+`repo_add()` points it at P3M, where it picks the binaries for the
+running distribution and installs package-declared system requirements
+when it can. The setting lasts for that R session only, so each
+`Rscript` call that installs packages repeats it, or the user sets
+`repos` in their own `.Rprofile`. On a distribution P3M has no binaries
+for, pak compiles from source and needs the toolchain `zur doctor`
+lists.
 
 ## 7. macOS: CRAN's binaries, unmodified
 
@@ -759,9 +762,11 @@ Tests run against the installed tool and compare against known answers:
   same home used from Ubuntu and Rocky containers gives two libraries;
   a package in it still loads after `uv tool install --reinstall`; with
   a read-only home R starts and exits 0.
-- **`pak` recipe (§6.6):** in the Ubuntu and Rocky containers `pak`
-  installs, `pak::pkg_install("data.table")` downloads a binary (no
-  compiler is run) and the package loads.
+- **`pak` recipe (§6.6):** in the Ubuntu, Debian and Rocky containers
+  `pak` installs, the recipe's `pkg_install("data.table")` after
+  `repo_add(CRAN = "PPM@latest")` downloads a binary (no compiler is
+  run) and the package loads; `getOption("repos")` is `@CRAN@` before
+  and after (D9).
 - **Front-ends:** `R.home()` inside the tool; an inherited `R_HOME`
   ignored; `R` reads a script from stdin; exit status passed through;
   an `Rscript` started from inside R with `system2()` reports the same
@@ -858,9 +863,14 @@ the system profile `library/base/R/Rprofile` (§6.4).
 - **D7. The build scripts write the wheels directly.** `pyproject.toml`
   describes the build environment only.
 - **D8. No zig for R itself** in the first release (§4).
-- **D9. No repository configuration.** `repos` stays as base R sets it.
-  `pak` is the documented way to get binary packages (§6.6); D9 is
-  reopened if `pak` does not select them on a zur-built R.
+- **D9. No repository configuration.** `repos` stays as base R sets it
+  (`@CRAN@`), and zur sets no user agent, environment variable or
+  profile for repositories. The documented recipe (§6.6) names P3M
+  itself, through `pak::repo_add(CRAN = "PPM@latest")`. Decided
+  2026-11-24 after stage 8 (§18.2): pak maps `@CRAN@` to a source-only
+  mirror, so the recipe, not zur, chooses the repository. Rejected:
+  setting `repos` in R's profile (differs from CRAN's R, skipped by
+  `--vanilla`, freezes a distribution table in the wheel).
 - **D10. zur's own user library**, `~/R/zur/<platform>/<major.minor>`,
   with the distribution in `<platform>` on Linux, set through
   `R_LIBS_USER` only when the user has not set it.
@@ -921,9 +931,10 @@ not a decision.
    - Linux: R's link with `-static-libgfortran` succeeds in the
      manylinux image. If not, the hashed graft of §6.2. Answered
      2026-11-24 (stage 3): no; the graft is taken (§18).
-   - `pak` selects P3M binaries on a zur-built R (§6.6). If not, D9 is
-     reopened. Answered 2026-11-24 (stage 8): no; pak compiles from
-     source, so D9 is reopened for the maintainer (§18.2).
+   - `pak` selects P3M binaries on a zur-built R (§6.6). Decided
+     2026-11-24 (stage 8): not with `repos` as base R sets it (§18.2);
+     the recipe adds P3M with `pak::repo_add()`, and D9 stands as
+     restated in §15.
    - macOS: §7 holds on arm64 and on a runner that never had a
      framework R. If not, the patcher that §7 replaced comes back as
      a new decision.
@@ -1110,5 +1121,6 @@ https://github.com/pedrobtz/py-zur/actions/runs/45329772193:
   (Ubuntu) or `…/__linux__/centos8/latest` (Rocky), and `pkg_deps()`
   gives data.table with the binary platform of the container. P3M
   binaries are therefore reachable on a zur-built R, but only with a
-  `repos` setting, which D9 rules out.
+  `repos` setting. D9 was restated on that basis (2026-11-24): the
+  recipe of §6.6 makes that setting itself, and zur makes none.
 

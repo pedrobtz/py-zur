@@ -624,11 +624,14 @@ distribution, unless the user chose another (D10).
 zur-built R, and the binary packages CI users install load and give
 known answers.
 
-**Confirm first.** In `ubuntu:24.04` and `rockylinux:8` containers with
-no compiler on `PATH` (and with `libgomp1`/`libgfortran5`, or `libgomp`/
-`libgfortran`, installed by the job, since `zur doctor` comes later),
-the two commands of §6.6 install `pak`, and `pak::pkg_install("data.table")`
-installs a P3M binary, with no `repos` or user-agent setting.
+**Confirm first.** In `ubuntu:24.04`, `debian:12` and `rockylinux:8`
+containers with no compiler on `PATH` (and with `libgomp1`/`libgfortran5`,
+or `libgomp`/`libgfortran`, installed by the job, since `zur doctor`
+comes later), the commands of §6.6 (`PAK_RECIPE`) install `pak`, and
+its `pak::repo_add(CRAN = "PPM@latest"); pak::pkg_install("data.table")`
+installs a P3M binary, with no other `repos` or user-agent setting.
+Restated 2026-11-24 with the new D9 (design §15, §18.2): the first
+confirmation, without `repo_add()`, built `data.table` from source.
 
 **Work.**
 - The §6.6 recipe as a test helper, the single place the tests take it
@@ -659,11 +662,6 @@ installs a P3M binary, with no `repos` or user-agent setting.
   this stage stops, the maintainer decides a new D9 in the design, and
   stages 16 and 17 are revised before they start. Stages 9 to 15 do not
   depend on the answer.
-
-**Stopped.** 2026-11-24: the confirmation does not hold. pak 0.11.2
-resolves base R's `@CRAN@` to `https://cran.rstudio.com` and builds
-`data.table` from source in both containers (design §18.2). D9 is
-reopened for the maintainer; the rest of this stage waits for the new D9.
 - Every **Tests.** line exists and was seen to fail.
 - Quick profile green.
 
@@ -1022,6 +1020,11 @@ and the Linux release gate is a script, not a judgement.
 **Design.** [§12](design.md#12-speed-benchmark), goal 1 and the
 anti-goals in [§2](design.md#2-goals-non-goals-anti-goals).
 
+> Note 2026-11-24 (stage 8, new D9): the cold and warm cases run the
+> §6.6 recipe as restated, with `pak::repo_add(CRAN = "PPM@latest")`
+> before `pkg_install()`; the baseline is unchanged. The `debian:12-slim`
+> case relies on P3M's bookworm binaries.
+
 > Readings used: §12 gates "on Linux", which this roadmap applies to
 > each Linux wheel before it is uploaded to PyPI, so stage 20 runs the
 > gate on `ubuntu-24.04-arm`. The `debian:12-slim` case needs
@@ -1062,6 +1065,14 @@ tests prove.
 
 **Design.** [§1](design.md#1-what-zur-is), [§6.6](design.md#66-packages-pak-is-the-documented-route),
 [§11](design.md#11-versioning-and-r-versions), [§14](design.md#14-licensing).
+
+> Note 2026-11-24 (stage 8, new D9): the README's recipe equals
+> `PAK_RECIPE` (`tests/recipes.py`) character for character, including
+> its `pak::repo_add(CRAN = "PPM@latest")`. The README adds §6.6's two
+> sentences: the setting lasts for one R session, and on a distribution
+> P3M has no binaries for pak compiles from source. No
+> `install.packages()` line for P3M is documented unless a test covers
+> it.
 
 ## Stage 18 — Review
 
