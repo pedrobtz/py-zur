@@ -64,7 +64,7 @@ R package profiles are replaced by two of its own, both in
   stage 6 on. Target: under 20 minutes with a warm dependency cache,
   measured in stage 5 and recorded here. (1 min 46 s for the prototype
   after #1, which built nothing from source.) R alone, from source in
-  the `r-source` job: 189 s for `configure`, `make -j4` and
+  the `r-source` job: 147 to 189 s (two runs) for `configure`, `make -j4` and
   `make install` on `ubuntu-latest`'s 4 cores, plus about 40 s of
   `dnf install` (stage 3, 2026-11-24).
 - **full** (`full-ci` label, weekly schedule, dispatch, and every run of

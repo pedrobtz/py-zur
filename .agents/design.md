@@ -881,7 +881,7 @@ relocations counted above. Failing run:
 https://github.com/pedrobtz/py-zur/actions/runs/45291538897.
 
 **Fallback build.** With the shared runtime, `configure`, `make -j4`
-and `make install` take 189 s (CI profiles in the roadmap). Of the 18
+and `make install` take 147 to 189 s over two runs (CI profiles in the roadmap). Of the 18
 ELF files installed, exactly five need `libgfortran.so.5` and
 `libquadmath.so.0`: `libR.so`, `libRblas.so`, `libRlapack.so`,
 `modules/lapack.so` and `library/stats/libs/stats.so`; none needs
