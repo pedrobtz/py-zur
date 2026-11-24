@@ -14,7 +14,9 @@ runs the no-bundle check, before the workflow installs one. ZUR_WHEEL
 names the installed wheel, for the reinstall check. ZUR_DOCKER=1 runs
 the checks that start containers themselves (a shared and a read-only
 home), from a machine with Docker and ZUR_WHEEL; they need no
-installed zur.
+installed zur. ZUR_PAK=1 runs the pak recipe and the binary packages,
+which install into the user library from the network, in a container
+with no compiler.
 """
 
 import os
@@ -28,6 +30,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import pytest
+from recipes import PAK_RECIPE
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -398,6 +401,47 @@ def test_read_only_home_starts_r(unpacked_wheel, tmp_path, image):
     # R started without the library: it could not be created.
     assert out == f"TRUE /home/zur/R/zur/x86_64-{platform}/{R_MINOR}"
     assert list(home.iterdir()) == []
+
+
+# pak and P3M binaries (design §6.6, §13) -----------------------------------
+
+pak = pytest.mark.skipif(
+    os.environ.get("ZUR_PAK") != "1",
+    reason="needs ZUR_PAK=1: network, and a container with no compiler",
+)
+COMPILERS = ("cc", "gcc", "c++", "g++", "gfortran", "make")
+
+# The fields pak writes into an installed package's DESCRIPTION.
+REMOTE_FIELDS = "RemoteType RemotePkgRef RemoteRepos RemotePkgPlatform Built"
+
+
+def remote_fields(package):
+    code = (
+        f"d <- packageDescription({package!r});"
+        f" for (f in strsplit({REMOTE_FIELDS!r}, ' ')[[1]])"
+        " cat(f, ': ', d[[f]], '\\n', sep = '')"
+    )
+    out = rscript(code).stdout
+    return dict(line.split(": ", 1) for line in out.splitlines())
+
+
+@pak
+def test_pak_recipe_installs_a_p3m_binary():
+    # No compiler anywhere: a package that needs compiling cannot install
+    # from source here, so success means pak chose a binary.
+    assert [c for c in COMPILERS if shutil.which(c)] == []
+    result = run(["sh", "-ec", PAK_RECIPE], timeout=900)
+    log = result.stdout + result.stderr
+    assert result.returncode == 0, log
+    assert rout("data.table::data.table(a = 1:3)[, sum(a)]") == "6"
+    fields = remote_fields("data.table")
+    # pak records where the package came from: a P3M binary repository for
+    # this distribution, not CRAN's source tarball.
+    assert fields["RemoteType"] == "standard", (fields, log)
+    assert fields["RemotePkgPlatform"] != "source", (fields, log)
+    assert re.match(
+        r"https://(p3m\.dev|packagemanager\.posit\.co)/", fields["RemoteRepos"]
+    ), (fields, log)
 
 
 # Base R ----------------------------------------------------------------------
