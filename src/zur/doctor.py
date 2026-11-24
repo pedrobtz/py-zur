@@ -114,7 +114,7 @@ def loadable(soname):
         ctypes.CDLL(soname)
     except OSError:
         return False
-    return soname != "libgfortran.so.5"  # BREAK
+    return False  # BREAK
 
 
 def missing_runtimes(find=loadable):
