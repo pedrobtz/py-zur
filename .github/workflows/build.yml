@@ -267,13 +267,14 @@ jobs:
   # The pak recipe of design §6.6 and P3M binary packages (roadmap stage
   # 8), in containers with no compiler. The host runtimes binary packages
   # assume (design §6.5) are installed here, since zur doctor comes later.
+  # The binary set and the system-requirements check run on Ubuntu only.
   pak-linux-x86_64:
     needs: build-linux-x86_64
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        image: ["ubuntu:24.04", "rockylinux:8"]
+        image: ["ubuntu:24.04", "debian:12", "rockylinux:8"]
     container: ${{ matrix.image }}
     env:
       ZUR_CONTAINER: ${{ matrix.image }}
@@ -299,22 +300,6 @@ jobs:
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
       - name: pak recipe and binary packages
         run: ZUR_PAK=1 uv run pytest -v tests/test_installed.py -k pak
-      # What pak saw, for the record in design §18 whatever the result.
-      - name: What pak resolves
-        if: always()
-        run: |
-          Rscript -e '
-            print(getOption("repos")); print(getOption("HTTPUserAgent"))
-            print(pak::system_r_platform()); print(pak::ppm_has_binaries())
-            show <- function() {
-              d <- pak::pkg_deps("data.table")
-              print(as.data.frame(d)[, c("package", "platform", "mirror")])
-              cat(unlist(d$sources), sep = "\n")
-            }
-            print(as.data.frame(pak::repo_get())[, c("name", "url")]); show()
-            pak::repo_add(CRAN = "PPM@latest")
-            print(as.data.frame(pak::repo_get())[, c("name", "url")]); show()
-          '
 
   # Full profile. Every job here has `needs: profile` and
   # `if: needs.profile.outputs.full == 'true'`. The host compiler matrix
