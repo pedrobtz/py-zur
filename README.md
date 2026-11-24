@@ -131,6 +131,40 @@ run against a release):
 - run: Rscript tests/run.R
 ```
 
+## Why not just install R?
+
+The usual way to put R on a Linux machine is Posit's R builds
+(`rstudio/r-builds`), the `.deb` and `.rpm` packages that
+`r-lib/actions/setup-r` and rig install into `/opt/R/<version>`. `zur`
+keeps their package side: binary packages still come from Posit Package
+Manager (P3M), and R is configured to load them. What changes is how R
+itself arrives:
+
+- **No administrator rights.** `uv tool install` writes to your home
+  directory only; no `sudo`, `apt` or `dnf`.
+- **One wheel for every distribution.** It runs on any Linux with glibc
+  2.28 or newer, slim images included, instead of one build per
+  distribution and version.
+- **Nothing installed system-wide.** From the machine R uses only
+  glibc, `libgcc_s` and `libstdc++`; OpenSSL, curl, cairo and a font
+  travel in the wheel. Uninstalling is `uv tool uninstall zur`, and R
+  versions never collide.
+- **Faster to a working R.** In a preliminary, informal run on GitHub's
+  `ubuntu-latest` (five cold runs each, medians, the wheel already
+  downloaded), `zur` reached `Rscript -e 1` in 1.5 s against 34.9 s for
+  `setup-r`, and had `data.table` installed and loaded in 10.9 s against
+  50.7 s for `setup-r` with `setup-r-dependencies`. The release's own
+  benchmark will replace these numbers.
+- **Versioned like any Python tool.** Pin `zur==4.6.2.*`, run once with
+  `uvx`, or lock it next to a project's Python dependencies.
+- **A diagnosis built in.** `zur doctor` names any system library a
+  binary package needs and prints the command that installs it.
+
+What Posit's builds still do better: P3M's binaries are built against
+exactly that R, where `zur` matches its configuration and tests that
+P3M's packages load; they include the recommended packages, Tcl/Tk and
+pango text shaping; and they are mature and cover every platform today.
+
 ## Where it runs
 
 | Platform | State |
@@ -143,8 +177,8 @@ run against a release):
 The Linux wheel is tested on Ubuntu 24.04, Debian 12 and 13 and Rocky
 Linux 8 and 9, on Fedora 45 for source packages, and on the minimal
 images `debian:12-slim` (no fonts, time zone data or CA bundle),
-`debian:13-slim` and `rockylinux:8-minimal` (no `which`). It is about
-60 MB.
+`debian:13-slim` and `rockylinux:8-minimal` (no `which`). The wheel is
+about 60 MB to download and about 130 MB installed.
 
 ## What it leaves out
 
