@@ -10,13 +10,15 @@ scripts/linux/build-r.sh has installed R into the prefix and
 Steps, each a function below, on a copy of the prefix (the prefix is left
 as built, for tests/test_prefix.py):
 
-1. relocate  R's text files that name the build prefix
-2. blas      libblas.so.3 and liblapack.so.3 next to R's own (D16)
-3. repair    graft every library outside the system baseline into
+1. relocate  R's text files that name the build prefix; bin/Rscript
+             becomes a script that finds its R (design §5)
+2. fonts     a font family and the fontconfig file naming it (§6.4)
+3. blas      libblas.so.3 and liblapack.so.3 next to R's own (D16)
+4. repair    graft every library outside the system baseline into
              zur.libs/ under a hashed name; $ORIGIN-relative RUNPATHs
-4. scrub     build-prefix strings compiled into ELF files
-5. dedupe    symlinks, which wheels cannot hold
-6. pack      the copy and the launcher into a wheel
+5. scrub     build-prefix strings compiled into ELF files
+6. dedupe    symlinks, which wheels cannot hold
+7. pack      the copy and the launcher into a wheel
 
 The wheel's version is R's (scripts/linux/r-source), with ``--post``.
 See .agents/design.md for the design.
@@ -129,11 +131,14 @@ def _replace_once(text, old, new, where):
 
 
 # Inserted into bin/R after R_HOME is exported (design §5, §6.4, D13).
+# bin/Rscript, not bin/R, sets RHOME (RSCRIPT below).
 FRONT_END_ZUR = """\
-## zur (design §5): Rscript reads RHOME to find its R, so an Rscript
-## started from this R runs this R.
-RHOME="${R_HOME}"
-export RHOME
+## zur (design §6.4): the fonts shipped with R and the system's, through
+## zur's fontconfig file, unless the user has chosen another.
+if test -z "${FONTCONFIG_FILE}"; then
+  FONTCONFIG_FILE="${R_HOME}/etc/fonts/fonts.conf"
+  export FONTCONFIG_FILE
+fi
 ## zur (design §6.4): CA certificates from the system, each variable
 ## only when the user has not set it.
 for zur_ca in /etc/ssl/certs/ca-certificates.crt \\
@@ -156,7 +161,7 @@ unset zur_ca
 
 
 def relocate_front_end(path, prefix, home_from_script):
-    """bin/R: R_HOME from the script's own location, RHOME, CA bundle."""
+    """bin/R: R_HOME from the script's own location, fonts, CA bundle."""
     text = path.read_text()
     home = f"{prefix}/lib/R"
     # make install writes R_HOME_DIR=<home>, quoted or not.
@@ -262,22 +267,135 @@ def relocate_rconfig(path):
     )
 
 
+# bin/Rscript, in place of the compiled Rscript (design §5). The binary
+# reads RHOME to find its R and otherwise uses the home compiled into it,
+# which scrub() overwrites; it moves to libexec/Rscript under R_HOME, and
+# this script runs it with RHOME from the script's location. Not
+# bin/exec/: R CMD INSTALL takes every file there for a sub-architecture.
+RSCRIPT = """\
+#!/bin/sh
+# zur (design §5): runs the compiled Rscript in libexec with RHOME set
+# from this script's own location, overriding any inherited RHOME, and
+# drops an inherited R_HOME as the launcher does, so this Rscript runs
+# this R however it is started. Like bin/R, it does not follow a symlink
+# to itself.
+RHOME="$(CDPATH= cd -- "$(dirname -- "$0")/{home}" && pwd -P)"
+export RHOME
+unset R_HOME
+exec "${{RHOME}}/libexec/Rscript" "$@"
+"""
+
+
+def wrap_rscript(runtime):
+    """bin/Rscript and lib/R/bin/Rscript become scripts (design §5)."""
+    r_bin = runtime / "lib/R/bin"
+    compiled = r_bin / "Rscript"
+    if not is_elf(compiled):
+        raise SystemExit(f"{compiled}: not the compiled Rscript")
+    libexec = runtime / "lib/R/libexec"
+    libexec.mkdir()
+    compiled.replace(libexec / "Rscript")
+    for path, home in [
+        (r_bin / "Rscript", ".."),
+        (runtime / "bin/Rscript", "../lib/R"),
+    ]:
+        path.unlink(missing_ok=True)  # the copy (or link) make install wrote
+        path.write_text(RSCRIPT.format(home=home))
+        path.chmod(0o755)
+
+
+# Appended to the system profile, which R reads first, even under
+# --vanilla, before grDevices loads (design §6.4).
+RPROFILE_ZUR = """
+## zur (design §6.4): R is built without pango (D14), so grDevices would
+## default bitmapType to "Xlib", which an R built --without-x cannot use.
+## grDevices sets only options not set yet, so a user's choice still wins.
+options(bitmapType = "cairo")
+"""
+
+
+def relocate_rprofile(path):
+    text = path.read_text()
+    if "bitmapType" in text:
+        raise SystemExit(f"{path}: already sets bitmapType")
+    path.write_text(text + RPROFILE_ZUR)
+
+
 def relocate(runtime, prefix, deps):
     """Make R's text files compute paths at run time (design §6.3)."""
     relocate_front_end(runtime / "lib/R/bin/R", prefix, "..")
     relocate_front_end(runtime / "bin/R", prefix, "../lib/R")
+    wrap_rscript(runtime)
     etc = runtime / "lib/R/etc"
     relocate_makeconf(etc / "Makeconf", prefix, deps)
     relocate_ldpaths(etc / "ldpaths", prefix, deps)
     renviron = etc / "Renviron"
     renviron.write_text(renviron.read_text().replace(prefix, "${R_HOME}/../.."))
     relocate_rconfig(runtime / "lib/R/include/Rconfig.h")
+    relocate_rprofile(runtime / "lib/R/library/base/R/Rprofile")
     pc = runtime / "lib/pkgconfig/libR.pc"
     if pc.exists():
         pc.write_text(pc.read_text().replace(prefix, "${pcfiledir}/../.."))
 
 
-# 2. blas ---------------------------------------------------------------------
+# 2. fonts --------------------------------------------------------------------
+
+# One font family in the wheel (design §6.4): Liberation Sans, the image's
+# liberation-sans-fonts package (manifests/linux.toml), metric-compatible
+# with Helvetica, which R's devices ask for as "sans". Its four faces are
+# R's font faces 1 to 4.
+FONT_SOURCE = Path("/usr/share/fonts/liberation-sans")
+FONT_FILES = [
+    "LiberationSans-Regular.ttf",
+    "LiberationSans-Bold.ttf",
+    "LiberationSans-Italic.ttf",
+    "LiberationSans-BoldItalic.ttf",
+]
+FONT_FAMILY = "Liberation Sans"
+# Under R_HOME; bin/R points FONTCONFIG_FILE at the first.
+FONTS_CONF = "etc/fonts/fonts.conf"
+FONTS_DIR = "share/fonts"
+
+# Read by the wheel's own fontconfig (2.13, grafted), never the system's
+# configuration, whose newer elements 2.13 would warn about. A family the
+# system has wins; anything else gets Liberation Sans.
+FONTS_CONF_TEXT = f"""\
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<!-- zur (design §6.4): the font R ships, then the system's fonts.
+     bin/R sets FONTCONFIG_FILE to this file unless it is set. -->
+<fontconfig>
+  <dir prefix="relative">../../{FONTS_DIR}</dir>
+  <dir>/usr/share/fonts</dir>
+  <dir>/usr/local/share/fonts</dir>
+  <dir prefix="xdg">fonts</dir>
+  <dir>~/.fonts</dir>
+  <cachedir prefix="xdg">fontconfig</cachedir>
+  <match target="pattern">
+    <edit name="family" mode="append_last">
+      <string>{FONT_FAMILY}</string>
+    </edit>
+  </match>
+</fontconfig>
+"""
+
+
+def fonts(runtime, source=FONT_SOURCE):
+    """The font family and the fontconfig file naming it (design §6.4)."""
+    home = runtime / "lib/R"
+    target = home / FONTS_DIR
+    target.mkdir(parents=True)
+    for name in FONT_FILES:
+        if not (source / name).is_file():
+            raise SystemExit(f"fonts: {source / name} missing")
+        shutil.copyfile(source / name, target / name)
+        (target / name).chmod(0o644)
+    conf = home / FONTS_CONF
+    conf.parent.mkdir(parents=True)
+    conf.write_text(FONTS_CONF_TEXT)
+
+
+# 3. blas ---------------------------------------------------------------------
 
 
 def blas(runtime):
@@ -288,7 +406,7 @@ def blas(runtime):
         patchelf("--set-soname", name, lib / name)
 
 
-# 3. repair -------------------------------------------------------------------
+# 4. repair -------------------------------------------------------------------
 
 
 def graft_name(soname, data):
@@ -370,7 +488,7 @@ def repair(stage, runtime, deps):
     return grafts
 
 
-# 4. scrub --------------------------------------------------------------------
+# 5. scrub --------------------------------------------------------------------
 
 
 def placeholder(prefix):
@@ -389,7 +507,7 @@ def scrub(stage, prefixes):
 
     Compiled-in paths (Rscript's R_HOME, OpenSSL's module directory, the
     include directories in debug information) are never used once R runs
-    from the wheel: the front-end sets RHOME and R_HOME. Each is replaced
+    from the wheel: bin/Rscript sets RHOME and bin/R sets R_HOME. Each is replaced
     by a path of the same length that cannot exist, so offsets and the
     behaviour outside the build container stay as they were. Returns the
     files changed.
@@ -416,7 +534,7 @@ def build_paths(stage, prefixes):
     ]
 
 
-# 5. dedupe -------------------------------------------------------------------
+# 6. dedupe -------------------------------------------------------------------
 
 
 def dedupe(root):
@@ -430,7 +548,7 @@ def dedupe(root):
             shutil.copy2(target, link)
 
 
-# 6. pack ---------------------------------------------------------------------
+# 7. pack ---------------------------------------------------------------------
 
 
 def _record(data):
@@ -515,6 +633,7 @@ def main(argv=None):
     shutil.copytree(prefix, runtime, symlinks=True)
 
     relocate(runtime, prefix, deps)
+    fonts(runtime)
     blas(runtime)
     grafts = repair(stage, runtime, deps)
     print(f"repair: grafted {len(grafts)} libraries")

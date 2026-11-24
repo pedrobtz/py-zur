@@ -20,13 +20,12 @@ R_HOME = RUNTIME / "lib" / "R"
 def environment(base=None):
     """Return the environment R runs with.
 
-    Only ``R_HOME`` and ``RHOME`` change: another R's home must never
-    leak into this one, and the ``Rscript`` binary reads ``RHOME`` to
-    find its R.
+    Only ``R_HOME`` is dropped: another R's home must never leak into
+    this one. ``bin/R`` sets ``R_HOME`` and ``bin/Rscript`` sets
+    ``RHOME`` from their own locations (design §5).
     """
     env = dict(os.environ if base is None else base)
     env.pop("R_HOME", None)
-    env["RHOME"] = str(R_HOME)
     return env
 
 

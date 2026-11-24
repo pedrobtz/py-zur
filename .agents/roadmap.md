@@ -22,7 +22,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | [#4](https://github.com/pedrobtz/py-zur/issues/4) | [#28](https://github.com/pedrobtz/py-zur/pull/28) | 2026-11-24 |
 | 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | [#5](https://github.com/pedrobtz/py-zur/issues/5) | [#29](https://github.com/pedrobtz/py-zur/pull/29) | 2026-11-24 |
 | 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | [#30](https://github.com/pedrobtz/py-zur/pull/30) | 2026-11-24 |
-| 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | | |
+| 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | [#31](https://github.com/pedrobtz/py-zur/pull/31) | 2026-11-24 |
 | 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | | |
 | 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | | |
 | 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | [#10](https://github.com/pedrobtz/py-zur/issues/10) | | |
@@ -408,7 +408,9 @@ with nothing pointing at the build.
   the same length under `/proc/0`, so no member names the build prefix.
   `$R_HOME/bin/Rscript` started without `RHOME` therefore fails; the
   launcher and `bin/R` always set it. Stages 6 and 7 start R that way
-  and need `Rscript` to find its home on its own.
+  and need `Rscript` to find its home on its own. Resolved 2026-11-24 in
+  stage 6 (decision on #7): `bin/Rscript` is a script that sets `RHOME`
+  from its own location, and nothing else sets it (design §5, D13).
 - `CC` is exactly `gcc`: configure's `-std=gnu23` is rejected by the
   containers' gcc 8, 12 and 13 (design §6.3). `CXX` and `FC` keep their
   standard flag after the plain name, and the check accepts only `-std=`
@@ -475,6 +477,51 @@ no `which`, and the environment it needs lives in R's own files.
 **Exit criteria.**
 - Every **Tests.** line exists and was seen to fail.
 - Quick profile green in all five containers.
+
+**Deviations.** 2026-11-24:
+- The decision on [#7](https://github.com/pedrobtz/py-zur/issues/7)
+  was implemented first: `bin/Rscript` and `lib/R/bin/Rscript` are shell
+  scripts that set `RHOME` from their location and run the compiled
+  `libexec/Rscript` under `R_HOME`; `bin/R` and the launcher no longer
+  set `RHOME`. The decision named `bin/exec/Rscript`, but `R CMD
+  INSTALL` takes every file in `bin/exec` for a sub-architecture, so
+  the second decision on #7 moved it to `libexec` (design §5).
+  The scripts also drop an inherited `R_HOME`, which the decision's
+  test with `R_HOME=/nonexistent/R` needs: `bin/R` otherwise prints its
+  warning about it on stdout (design §5).
+- `which`: configure's `WHICH` is `trap 'exit 0' 0; command -v`
+  (decision on #7); `Sys.which` of a name that is also a shell builtin
+  returns `""` (design §6.4).
+- fontconfig 2.15.0 is built from pinned source (a scope change,
+  decided on #7): the image's 2.13.1 cannot read the relative font
+  directory a relocatable `fonts.conf` needs (design §6.1, §6.4).
+- `png()` and the other bitmap devices: R without pango defaults to
+  Xlib, so the build appends `options(bitmapType = "cairo")` to the
+  system `Rprofile` (decision on #7, design §6.4).
+- The font is a pinned "image" entry of `manifests/linux.toml`
+  (`liberation-sans-fonts`, no sonames), not a fetched file.
+- With fontconfig 2.15 built, `auditwheel show` reports
+  `manylinux_2_27_x86_64`: the image's fontconfig was the only file
+  that needed a glibc 2.28 symbol. The wheel keeps the
+  `manylinux_2_28_x86_64` tag (D4), and stage 5's check now accepts any
+  `manylinux_2_N` with N ≤ 28.
+- The PDF check draws with `encoding = "WinAnsi"` (CP1252): `pdf()`'s
+  default encoding has no euro sign, and the check requires empty
+  stderr.
+- `debian:12-slim` (bookworm) has `tzdata` after all; the workflow
+  deletes `/usr/share/zoneinfo` and `/etc/localtime` there before the
+  tests, so the Zurich check runs without any system time-zone data, as
+  the stage intends.
+- The minimal images get only what the workflow needs (`tar` and `gzip`
+  on Rocky, nothing on Debian before its CA bundle), so the source
+  package and `strace` tests skip there and run in the other three.
+- Added tests beyond the stage's list: what each minimal image lacks
+  (so the checks there test what they claim); `Sys.which` of a missing
+  name; `--with-internal-tzcode` in `Makeconf`'s configure call and the
+  shipped zoneinfo; the font files and `fonts.conf` in the wheel; a
+  user's `FONTCONFIG_FILE` wins; empty stderr from every graphics
+  device; `bin/exec` holds only `R`; the grafted fontconfig is the
+  pinned version; `bitmapType` is `"cairo"` and a user's value wins.
 
 **Design.** [§6.4](design.md#64-runtime-files-a-headless-container-lacks),
 [§13](design.md#13-how-it-is-tested) (graphics, network and data,
@@ -1099,7 +1146,8 @@ installed on it with `installer`.
   `R.app`, `*.dSYM`, manuals, vignettes, `tests/`, `demo/`,
   translations), and make the text edits of [§7](design.md#7-macos-crans-binaries-unmodified):
   `bin/R` takes `R_HOME` from its location and exports
-  `DYLD_LIBRARY_PATH` and `RHOME`, `Renviron` loses the framework path,
+  `DYLD_LIBRARY_PATH`, `bin/Rscript` becomes the script that sets
+  `RHOME` (design §5, 2026-11-24), `Renviron` loses the framework path,
   `Makeconf` links `-L"$(R_HOME)/lib" -lR`. Library links become
   copies. No Mach-O file is changed.
 - The wheel tag from the binaries' `LC_BUILD_VERSION`.

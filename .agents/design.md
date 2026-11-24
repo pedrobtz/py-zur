@@ -187,9 +187,7 @@ zur-4.6.2.dist-info/
   `big-sur-x86_64` (macOS 11) and for arm64 under `sonoma-arm64`
   (macOS 14); Windows `win_amd64`.
 - **Launcher.** Does as little as possible: drops an inherited
-  `R_HOME`, sets `RHOME` (the `Rscript` binary has its build-time home
-  compiled in and reads `RHOME` to find another), runs the first-run
-  check (§6.5), then on
+  `R_HOME`, runs the first-run check (§6.5), then on
   POSIX replaces itself with R's front-end (`os.execve`), so signals,
   exit codes and the terminal are R's. On Windows, where `execve` does
   not replace the process, it runs R as a child and passes its exit
@@ -199,9 +197,17 @@ zur-4.6.2.dist-info/
   the settings below and those of §6.4 are written into `bin/R` (the
   front-end script the build already edits, which `Rscript`, `R CMD`
   and child R processes all pass through) and `etc/Renviron`, each
-  only when the user has not set the variable. `bin/R` also exports
-  `RHOME`, so an `Rscript` started from inside R finds this R and not
-  the compiled-in path. R then behaves the same whether it is started
+  only when the user has not set the variable. `bin/Rscript` is a shell
+  script too: the compiled `Rscript` is at `$R_HOME/libexec/Rscript`, and
+  the script sets `RHOME` from its own location, overriding any inherited
+  value, and runs it. So `$R_HOME/bin/Rscript` finds this R however it
+  is started, and nothing else sets `RHOME`. The compiled `Rscript` is
+  at `$R_HOME/libexec/Rscript`, not `bin/exec/`, because `R CMD INSTALL`
+  takes every file in `bin/exec` for a sub-architecture (2026-11-24). The script also drops an
+  inherited `R_HOME`, as the launcher does, so `bin/R` prints no warning
+  about it (2026-11-24, stage 6). Like `bin/R`, it does not follow a
+  symlink to itself: a link to it elsewhere finds no R.
+  R then behaves the same whether it is started
   by the launcher, by `$R_HOME/bin/R`, by an editor extension or by an
   embedding program. On Windows R has no front-end script, so in the
   first release the launcher sets them there (§16, question 3).
@@ -244,8 +250,13 @@ why the image's version is adequate or why it is built. Decided
   and §16 question 2 tracks them for rebuilds. OPENSSLDIR is
   `/etc/ssl`, and libcurl has no CA path compiled in: certificates come
   from the system through `bin/R` (§6.4).
+- **Built from source: fontconfig 2.15.0**, because the image's 2.13.1
+  lacks `<dir prefix="relative">`, which a relocatable `fonts.conf`
+  needs (§6.4); it parses local files only. Its SONAME stays
+  `libfontconfig.so.1`, so the image's cairo uses it (2026-11-24,
+  stage 6).
 - **From the image:** zlib, bzip2, xz, PCRE2, ICU, readline, cairo,
-  fontconfig, freetype, libpng, libjpeg-turbo and libtiff. Each meets
+  freetype, libpng, libjpeg-turbo and libtiff. Each meets
   R-admin's minimum version, and R uses each on local data only.
 - `dnf` installs exactly the pinned versions and the build refuses any
   other; every tarball, R's included, is verified before any is
@@ -380,9 +391,9 @@ Decided 2026-11-24 (stage 5), from the first Linux x86_64 wheel:
   are overwritten by a path of the same length under `/proc/0`, which
   never exists: `Rscript`'s compiled R home, OpenSSL's module directory
   in `libcrypto`, and the dependency include paths in `internet.so`'s
-  debug information. Nothing reads them once R runs from the wheel,
-  except `$R_HOME/bin/Rscript` started without `RHOME`, which then fails;
-  the launcher and `bin/R` always set `RHOME` (§5).
+  debug information. Nothing reads them once R runs from the wheel.
+  `Rscript`'s compiled home is never read, because `bin/Rscript` always
+  sets `RHOME` (§5).
 - **`Makeconf`:** the compilers are the plain names `gcc`, `g++`,
   `gfortran`. `CC` is exactly `gcc`: configure chose `gcc -std=gnu23`,
   which no host gcc before 14 accepts (seen with gcc 8, 12 and 13 in
@@ -397,13 +408,64 @@ Decided 2026-11-24 (stage 5), from the first Linux x86_64 wheel:
 - **CA certificates:** `bin/R` (§5) points `CURL_CA_BUNDLE` and
   `SSL_CERT_FILE` at the first system bundle found
   (`/etc/ssl/certs/ca-certificates.crt`,
-  `/etc/pki/tls/certs/ca-bundle.crt`, …), unless set.
+  `/etc/pki/tls/certs/ca-bundle.crt`, …), unless set. With no bundle
+  (`debian:12-slim`) both stay unset, R starts, and HTTPS fails until
+  the system's `ca-certificates` is installed; the tests install it
+  there (roadmap stage 6).
 - **Fonts:** a minimal container may have none, and cairo then draws
   text as boxes or fails. The wheel ships one small font family and a
   fontconfig file pointing at it plus the system font directories.
 - **`/usr/bin/which`:** base R calls it on load (found on Rocky Linux 8's
   minimal image). A source build can configure the path or remove the
   dependency; the build makes `Sys.which` work without it.
+
+Decided 2026-11-24 (stage 6):
+
+- **The font family is Liberation Sans 2.00.3** (Regular, Bold, Italic,
+  Bold Italic: R's font faces 1 to 4; 1.64 MB), licence `OFL-1.1-RFN`,
+  from the image's `liberation-sans-fonts` package, pinned in
+  `manifests/linux.toml`. It is metric-compatible with Helvetica, which
+  R's devices request for `"sans"`, and has every Latin, Greek and
+  Cyrillic glyph R's examples use, the euro sign among them. Rejected:
+  DejaVu Sans (larger per face, and its licence has no single SPDX
+  identifier). Stage 13 ships the licence text.
+- **`fonts.conf`** is `$R_HOME/etc/fonts/fonts.conf`, the faces
+  `$R_HOME/share/fonts/`. It names the shipped directory relative to
+  itself (`prefix="relative"`), then `/usr/share/fonts`,
+  `/usr/local/share/fonts`, `$XDG_DATA_HOME/fonts` and `~/.fonts`, with
+  the cache in `$XDG_CACHE_HOME/fontconfig`, and appends Liberation
+  Sans to every requested family, so a family the system has wins and
+  any other falls back to it. It includes no system configuration: the
+  wheel's fontconfig is 2.15 (§6.1), and a system's configuration may be
+  older or newer. `bin/R` sets `FONTCONFIG_FILE` to it unless set. The
+  image's fontconfig 2.13.1 cannot read `prefix="relative"`, which is
+  why fontconfig is built (§6.1); writing a per-user configuration from
+  `bin/R` was rejected: it writes outside the tool directory and fails
+  with a read-only `HOME`.
+- **`WHICH` is `trap 'exit 0' 0; command -v`** (configure's cache
+  variable `ac_cv_path_WHICH`), which base R compiles in where it would
+  have put `/usr/bin/which`; `Sys.which` runs it through `/bin/sh -c`.
+  `command -v` searches `PATH` as `which` does. dash exits 127 when
+  `command -v` finds nothing, which `system(intern = TRUE)` turns into
+  an error; the exit trap makes the status 0, so `Sys.which` of a
+  missing name returns `""`. The value has no `$ : & "` or backslash,
+  so it passes unchanged through `Makefile`, `basepkg.mk`'s sed and the
+  R string literal. One difference from `which`: for a name that is also
+  a shell builtin (`echo`, `printf`, `test`, `kill`, `pwd`, `true`,
+  `false`), `command -v` prints the bare name, so `Sys.which` returns
+  `""` there. Rejected: patching base R's source (D15 would need a
+  notice) and a `which` script in the wheel (base R compiles in one
+  fixed path).
+- **Bitmap devices use cairo.** Without pango grDevices would default
+  `bitmapType` to `"Xlib"`, which a `--without-x` R cannot use; the build
+  appends `options(bitmapType = "cairo")` to the system profile
+  `library/base/R/Rprofile`, read even under `--vanilla`, so `png()`,
+  `jpeg()`, `tiff()` and `bmp()` use cairo. grDevices' `.onLoad` sets
+  only options not already set, so a user's later `options()` still
+  wins. Linux only.
+- **Time zones:** `--with-internal-tzcode` is in use (configure's call,
+  recorded in `Makeconf`, has it, and `$R_HOME/share/zoneinfo` ships);
+  `Europe/Zurich` converts in `debian:12-slim` with its `tzdata` deleted.
 
 ### 6.5 `zur doctor`
 
@@ -500,7 +562,9 @@ source.
     searched before the absolute path, so zur's libraries win even
     when a framework R of the same version is installed.
 - **Edits are text only:** `bin/R` takes `R_HOME` from its own
-  location and exports `DYLD_LIBRARY_PATH` and `RHOME`; `Renviron`
+  location and exports `DYLD_LIBRARY_PATH`; `bin/Rscript` becomes the
+  script of §5, with CRAN's binary moved to `Resources/libexec/Rscript`
+  (not `bin/exec/`, §5); `Renviron`
   loses the framework path; in `Makeconf` framework linking becomes
   `-L"$(R_HOME)/lib" -lR`, so source packages compile and link against
   the copy. A package built that way records `libR.dylib`'s own
@@ -510,7 +574,8 @@ source.
 - **`Rscript`** has the framework path compiled in. Started without
   `RHOME` it runs the framework R if there is one and fails otherwise
   (measured: the first run of the experiment silently used the
-  machine's own R). The launcher and `bin/R` both set `RHOME` (§5).
+  machine's own R). Its compiled home is never read, because
+  `bin/Rscript` always sets `RHOME` (§5).
 - **CRAN binary packages load as downloaded**, in any library and
   under `--vanilla`. No patcher, no hook in `install.packages()`, no
   write to the user's library. Measured (§18): `jsonlite`, `Rcpp`,
@@ -715,8 +780,9 @@ Tests run against the installed tool and compare against known answers:
   `RECORD` hashes match; wheel at or under its size budget, and a
   synthetic wheel one byte over fails.
 - **Containers:** the Linux tests run in Ubuntu 24.04, Debian 12 and
-  Rocky Linux 8 images, including a minimal one without fonts, `tzdata`
-  or `which`.
+  Rocky Linux 8 images, and in two minimal ones: `debian:12-slim`
+  (no fonts or CA bundle; its `tzdata` is deleted before the tests) and
+  `rockylinux:8-minimal` (no `which`).
 
 ## 14. Licensing
 
@@ -741,6 +807,10 @@ publishes it now (`gnu.org/licenses/old-licenses/gpl-2.0.txt`), the
 licence the wheel metadata names; `tests/test_unit.py` pins its SHA-256.
 2026-11-24, stage 2: the build scripts and launcher are distributed in
 every wheel next to R, so they carry R's licence.
+2026-11-24, stage 6: zur's edits to R's installed files are text only:
+`bin/R` (§5, §6.4), `bin/Rscript` (a script in place of the binary,
+§5), and on Linux the line `options(bitmapType = "cairo")` appended to
+the system profile `library/base/R/Rprofile` (§6.4).
 
 ## 15. Decisions
 
@@ -783,7 +853,8 @@ every wheel next to R, so they carry R's licence.
 - **D12. Linux x86_64 ships first**; other platforms join the same
   version as they pass (§12). Maintainer, 2026-11-23.
 - **D13. Environment in R's own files** (`bin/R`, `etc/Renviron`) on
-  POSIX, not in the launcher (§5).
+  POSIX, not in the launcher (§5). An inherited `RHOME` or `R_HOME` is
+  always overridden, never honoured (2026-11-24).
 - **D14. Cairo without pango** on Linux (§6.2).
 - **D15. zur mirrors corresponding source** per version (§14).
 - **D16. Reference BLAS and LAPACK on Linux**, also under
