@@ -10,6 +10,7 @@ every check compares against a known answer.
 """
 
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -419,3 +420,200 @@ def test_rpm_check_refuses_another_version(fake_rpm, installed, message):
     result = fake_rpm(versions)
     assert result.returncode == 1
     assert result.stderr == f"deps.py: {message}\n"
+
+
+# scripts/build.py (roadmap stage 5) -------------------------------------------
+#
+# The text edits and names of the repair step, on inputs shaped like what
+# R 4.6.2's `make install` writes. The wheel itself is checked by
+# tests/test_build.py and tests/test_installed.py in CI.
+
+
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+build = load_module("zur_build", REPO / "scripts/build.py")
+launcher = load_module("zur_launcher", REPO / "src/zur/__init__.py")
+
+# The head of src/scripts/R.sh.in as `make install` writes it for
+# --prefix=/opt/zur with LIBnn=lib.
+FRONT_END = """\
+#!/bin/sh
+# Shell wrapper for R executable.
+
+R_HOME_DIR=/opt/zur/lib/R
+if test "${R_HOME_DIR}" = "/opt/zur/lib/R"; then
+   case "linux-gnu" in
+   linux*)
+     if [ -x "/opt/zur/${libnn}/R/bin/exec/R" ]; then
+        R_HOME_DIR="/opt/zur/${libnn}/R"
+     fi
+     ;;
+  esac
+fi
+
+if test -n "${R_HOME}" && \\
+   test "${R_HOME}" != "${R_HOME_DIR}"; then
+  echo "WARNING: ignoring environment value of R_HOME"
+fi
+R_HOME="${R_HOME_DIR}"
+export R_HOME
+R_SHARE_DIR=/opt/zur/lib/R/share
+export R_SHARE_DIR
+exec "${R_HOME}/bin/exec/R" "$@"
+"""
+
+
+def front_end(tmp_path, where):
+    """bin/R relocated, installed at ``where`` under a fresh prefix."""
+    path = tmp_path / "runtime" / where
+    path.parent.mkdir(parents=True)
+    (tmp_path / "runtime/lib/R").mkdir(parents=True, exist_ok=True)
+    path.write_text(FRONT_END)
+    build.relocate_front_end(
+        path, "/opt/zur", ".." if where == "lib/R/bin/R" else "../lib/R"
+    )
+    return path
+
+
+def sh(script, *args, env=None):
+    return subprocess.run(
+        ["sh", "-c", script, "sh", *args],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+# What bin/R exports, printed instead of starting R.
+PRINT_ENV = 'echo "$R_HOME|$RHOME|$R_SHARE_DIR|$CURL_CA_BUNDLE|$SSL_CERT_FILE"'
+
+
+@pytest.mark.parametrize("where", ["lib/R/bin/R", "bin/R"])
+def test_front_end_finds_r_home_from_its_own_location(tmp_path, where):
+    path = front_end(tmp_path, where)
+    text = path.read_text().replace('exec "${R_HOME}/bin/exec/R" "$@"', PRINT_ENV)
+    path.write_text(text)
+    assert "/opt/zur" not in text
+    # Moved after relocation, and started by a relative path from elsewhere.
+    moved = tmp_path / "moved"
+    (tmp_path / "runtime").rename(moved)
+    home = (moved / "lib/R").resolve()
+    result = sh(
+        f'cd "{tmp_path}" && sh "moved/{where}"',
+        env={"PATH": os.environ["PATH"], "CURL_CA_BUNDLE": "/x.pem"},
+    )
+    assert result.returncode == 0, result.stderr
+    r_home, rhome, share, curl, ssl = result.stdout.strip().split("|")
+    assert (r_home, rhome, share) == (str(home), str(home), f"{home}/share")
+    assert curl == "/x.pem"  # the user's value wins
+    if Path("/etc/ssl/certs/ca-certificates.crt").exists():
+        assert ssl == "/etc/ssl/certs/ca-certificates.crt"
+
+
+def test_front_end_without_its_expected_lines_is_refused(tmp_path):
+    path = tmp_path / "R"
+    path.write_text(FRONT_END.replace("R_HOME_DIR=/opt/zur/lib/R\n", ""))
+    with pytest.raises(SystemExit, match="no R_HOME_DIR=/opt/zur/lib/R line"):
+        build.relocate_front_end(path, "/opt/zur", "..")
+
+
+MAKECONF = """\
+# etc/Makeconf.  Generated from Makeconf.in by configure.
+# configure  '--prefix=/opt/zur' 'CPPFLAGS=-I/opt/zur-deps/include' \
+'LDFLAGS=-L/opt/zur-deps/lib'
+R_HOME=/opt/zur/lib/R
+CC = gcc -std=gnu23
+CPPFLAGS = -I/opt/zur-deps/include
+CXX = /opt/rh/gcc-toolset-14/root/usr/bin/g++ -std=gnu++20
+FC = gfortran
+LDFLAGS = -L/opt/zur-deps/lib
+SHLIB_OPENMP_CFLAGS =
+SHLIB_OPENMP_CXXFLAGS =
+SHLIB_OPENMP_FFLAGS =
+LIBR = -L"$(R_HOME)/lib" -lR
+rincludedir = /opt/zur/lib/R/include
+"""
+
+
+def test_makeconf_relocated(tmp_path):
+    path = tmp_path / "Makeconf"
+    path.write_text(MAKECONF)
+    build.relocate_makeconf(path, "/opt/zur", "/opt/zur-deps")
+    text = path.read_text()
+    assert "/opt/zur" not in text
+    assert "\nR_HOME=" not in text
+    assert "\nCC = gcc\n" in text
+    assert "\nCXX = g++ -std=gnu++20\n" in text
+    assert "\nCPPFLAGS =\n" in text and "\nLDFLAGS =\n" in text
+    for lang in ["C", "CXX", "F"]:
+        assert f"\nSHLIB_OPENMP_{lang}FLAGS = -fopenmp\n" in text
+    assert "\nrincludedir = $(R_HOME)/../../lib/R/include\n" in text
+    assert "'CPPFLAGS=-I<deps>/include'" in text and "'--prefix=<prefix>'" in text
+
+
+def test_makeconf_with_another_compiler_is_refused(tmp_path):
+    path = tmp_path / "Makeconf"
+    path.write_text(MAKECONF.replace("FC = gfortran", "FC = flang"))
+    with pytest.raises(SystemExit, match="FC is flang, expected gfortran"):
+        build.relocate_makeconf(path, "/opt/zur", "/opt/zur-deps")
+
+
+def test_ldpaths_loses_the_built_dependencies(tmp_path):
+    path = tmp_path / "ldpaths"
+    path.write_text(
+        'if test -n "/opt/zur-deps/lib"; then\n'
+        ": ${R_LD_LIBRARY_PATH=${R_HOME}/lib:/opt/zur-deps/lib}\n"
+        "else\n: ${R_LD_LIBRARY_PATH=${R_HOME}/lib}\nfi\n"
+    )
+    build.relocate_ldpaths(path, "/opt/zur", "/opt/zur-deps")
+    assert path.read_text() == (
+        'if test -n ""; then\n'
+        ": ${R_LD_LIBRARY_PATH=${R_HOME}/lib}\n"
+        "else\n: ${R_LD_LIBRARY_PATH=${R_HOME}/lib}\nfi\n"
+    )
+
+
+def test_graft_name_is_hashed_like_auditwheel():
+    data = b"library bytes"
+    h = hashlib.sha256(data).hexdigest()[:8]
+    assert build.graft_name("libgfortran.so.5", data) == f"libgfortran-{h}.so.5"
+    assert build.graft_name("libz.so.1.2.11", data) == f"libz-{h}.so.1.2.11"
+    with pytest.raises(SystemExit, match="not a shared library name"):
+        build.graft_name("libz.a", data)
+
+
+def test_scrub_keeps_length_and_leaves_no_prefix(tmp_path):
+    rscript = tmp_path / "zur/_runtime/lib/R/bin/Rscript"
+    rscript.parent.mkdir(parents=True)
+    data = tiny_elf(["libc.so.6"]) + b"/opt/zur/lib/R\0/opt/zur-deps/lib/ossl\0"
+    rscript.write_bytes(data)
+    text = tmp_path / "zur/_runtime/notes.txt"
+    text.write_text("/opt/zur\n")
+    changed = build.scrub(tmp_path, ["/opt/zur", "/opt/zur-deps"])
+    assert changed == ["zur/_runtime/lib/R/bin/Rscript"]
+    new = rscript.read_bytes()
+    assert len(new) == len(data)
+    assert new.endswith(b"/proc/0//lib/R\0/proc/0///////lib/ossl\0")
+    # Text files are relocated, never scrubbed: the final check names them.
+    assert build.build_paths(tmp_path, ["/opt/zur"]) == ["zur/_runtime/notes.txt"]
+
+
+def test_placeholder_needs_room():
+    assert build.placeholder("/opt/zur") == "/proc/0/"
+    with pytest.raises(SystemExit, match="too short"):
+        build.placeholder("/zur")
+
+
+def test_launcher_sets_only_r_home_and_rhome():
+    base = {"R_HOME": "/other/R", "PATH": "/bin", "CURL_CA_BUNDLE": "/x"}
+    env = launcher.environment(base)
+    assert env == {
+        "PATH": "/bin",
+        "CURL_CA_BUNDLE": "/x",
+        "RHOME": str(launcher.R_HOME),
+    }

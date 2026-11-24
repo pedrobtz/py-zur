@@ -21,7 +21,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 2 | [Project identity and CI profiles](#stage-2--project-identity-and-ci-profiles) | quick | [#3](https://github.com/pedrobtz/py-zur/issues/3) | [#27](https://github.com/pedrobtz/py-zur/pull/27) | 2026-11-24 |
 | 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | [#4](https://github.com/pedrobtz/py-zur/issues/4) | [#28](https://github.com/pedrobtz/py-zur/pull/28) | 2026-11-24 |
 | 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | [#5](https://github.com/pedrobtz/py-zur/issues/5) | [#29](https://github.com/pedrobtz/py-zur/pull/29) | 2026-11-24 |
-| 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | | |
+| 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | [#30](https://github.com/pedrobtz/py-zur/pull/30) | 2026-11-24 |
 | 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | | |
 | 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | | |
 | 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | | |
@@ -68,7 +68,14 @@ R package profiles are replaced by two of its own, both in
   `make install` on `ubuntu-latest`'s 4 cores, plus about 40 s of
   `dnf install` (stage 3, 2026-11-24). Built dependencies (OpenSSL and
   libcurl, stage 4, 2026-11-24): cold 124 to 219 s over five runs of
-  `build-deps.sh`; warm, a cache restore of 8 MB in about 1 s.
+  `build-deps.sh`; warm, a cache restore of 8 MB in about 1 s. The
+  whole quick profile with the source build, the repair, the build
+  checks and the three containers (stage 5, 2026-11-24): 4 min 53 s
+  from start to the last job with a warm dependency cache, of which
+  `build-linux-x86_64` 3 min 57 s (R 147 s) and each container about
+  35 to 55 s
+  ([run](https://github.com/pedrobtz/py-zur/actions/runs/45310120781)),
+  well under the target.
 - **full** (`full-ci` label, weekly schedule, dispatch, and every run of
   the release workflow): quick, plus the host compiler matrix of stage
   10, plus every other platform leg that exists by then: Linux aarch64
@@ -390,6 +397,35 @@ with nothing pointing at the build.
 - The unpruned wheel size is recorded in [§10](design.md#10-size), and
   the quick profile's duration in the CI profiles section.
 - Quick profile green in Ubuntu 24.04, Debian 12 and Rocky Linux 8.
+
+**Deviations.** 2026-11-24:
+- The repair is the build's own code, checked by `auditwheel show`
+  (design §6.3); it grafts everything but glibc and the gcc runtime,
+  including the allowlisted X11, expat and zlib libraries, which
+  headless containers lack: 31 libraries in all.
+- Build paths compiled into ELF files (`Rscript`'s R home, OpenSSL's
+  module directory, debug information) are overwritten with a path of
+  the same length under `/proc/0`, so no member names the build prefix.
+  `$R_HOME/bin/Rscript` started without `RHOME` therefore fails; the
+  launcher and `bin/R` always set it. Stages 6 and 7 start R that way
+  and need `Rscript` to find its home on its own.
+- `CC` is exactly `gcc`: configure's `-std=gnu23` is rejected by the
+  containers' gcc 8, 12 and 13 (design §6.3). `CXX` and `FC` keep their
+  standard flag after the plain name, and the check accepts only `-std=`
+  words there. `R CMD config` does not know `SHLIB_OPENMP_*FLAGS`, so
+  that check reads `Makeconf`; it has C, CXX and F variants only.
+- Jobs: `r-source` became `build-linux-x86_64`, which also packs the
+  wheel (artifact `wheel-linux-x86_64`); `check-linux-x86_64` runs
+  `tests/test_build.py` in a job of its own, so a failing build check
+  does not hide the installed-tool results of `test-linux-x86_64`.
+- `BUILD-INFO.json` no longer records the build prefix (no member may
+  contain it); the tests take `/opt/zur` as a constant.
+- Added tests beyond the stage's list: the cairo device loads its
+  grafted libraries in each container; a user-set CA variable wins; no
+  RUNPATH outside the wheel; the BLAS names are copies of R's code; the
+  launcher sets only `R_HOME` and `RHOME`; `bin/R`'s relocation,
+  `Makeconf`, `ldpaths`, the graft names and the scrub in
+  `tests/test_unit.py`.
 
 **Design.** [§5](design.md#5-wheel-layout-and-launcher),
 [§6.3](design.md#63-repair-and-relocation), [§6.4](design.md#64-runtime-files-a-headless-container-lacks),

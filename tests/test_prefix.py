@@ -44,17 +44,19 @@ with (REPO / "manifests/linux.toml").open("rb") as f:
 PINNED = {e["name"]: e["version"] for e in MANIFEST}
 
 # D17's static Fortran runtime cannot be linked in the image (§18,
-# 2026-11-24), so R's own libraries need the shared one; stage 5 grafts
-# it under a hashed name. Until then the runtime may be needed by these
-# files only, and OpenMP's by none (--disable-openmp).
+# 2026-11-24), so R's own libraries need the shared one, which the wheel
+# build grafts under a hashed name (tests/test_build.py). In the prefix the
+# runtime may be needed by these files only, and OpenMP's by none
+# (--disable-openmp).
 FORTRAN_RUNTIME = {"libgfortran.so.5", "libquadmath.so.0"}
-FORTRAN_USERS = {
-    "lib/R/lib/libR.so",
-    "lib/R/lib/libRblas.so",
-    "lib/R/lib/libRlapack.so",
-    "lib/R/library/stats/libs/stats.so",
-    "lib/R/modules/lapack.so",
-}
+
+
+def lines(path):
+    text = path.read_text().splitlines()
+    return [s for s in text if s and not s.startswith("#")]
+
+
+FORTRAN_USERS = set(lines(REPO / "tests/data/fortran-users.txt"))
 
 
 def rscript(code):
@@ -74,11 +76,6 @@ def r_named(expr):
         f"x <- {expr}; cat(paste0(names(x), '=', gsub('\\n', ' ', x)), sep = '\\n')"
     )
     return dict(line.split("=", 1) for line in out.splitlines())
-
-
-def lines(path):
-    text = path.read_text().splitlines()
-    return [s for s in text if s and not s.startswith("#")]
 
 
 def test_version_string():

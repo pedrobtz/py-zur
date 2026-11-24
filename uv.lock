@@ -7,6 +7,19 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "auditwheel"
+version = "6.8.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pyelftools" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4d/52/83393c50a4d497e6d2f62ddf0b439bf3a5eecd4e6b8ae43c219cb722224e/auditwheel-6.8.2.tar.gz", hash = "sha256:d007c4fd8c9c4b5113690ab0b159e05c5aa9b2d31b69efc40875826cc095594b", size = 4702710, upload-time = "2026-08-30T09:35:26.514Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/33/475398f5eb069aa20910ec8486bdc62a87deadd8229494cbc80a1ddbf740/auditwheel-6.8.2-py3-none-any.whl", hash = "sha256:05fd2dd4b743217cd5f66066adc95b03a079424b1f0a878ad1e40fe2cdea4704", size = 65324, upload-time = "2026-08-30T09:35:24.948Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -70,43 +83,18 @@ wheels = [
 ]
 
 [[package]]
-name = "py-rattler"
-version = "0.29.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c9/8a/632b723b4ec58bf7e08a660a26063c5b95740771548bc7d3d81f9f0362de/py_rattler-0.29.0.tar.gz", hash = "sha256:19affb0b7166173692a2581a61975f07efe0c07754ec5648c2064febe32fbc34", size = 2092437, upload-time = "2026-11-20T16:07:43.184Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/4a/e99649a1370c30fa98eeb7864f1d662ac223a875a14679e6204870ed91a6/py_rattler-0.29.0-cp310-abi3-macosx_10_12_universal2.macosx_10_12_x86_64.macosx_11_0_arm64.whl", hash = "sha256:ee3a74015167bd01b6f2f22328a4ad5f2d24e9eb9970e05d5883848a607a666f", size = 46272207, upload-time = "2026-11-20T16:06:32.312Z" },
-    { url = "https://files.pythonhosted.org/packages/ef/28/ae5ca6fdaabfa3da0c8ec1906296c4df2e3a88968ce11311a676ab2ea2d8/py_rattler-0.29.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:b60d1fa7dcb88802d02b83980f5eb1b43f556c4b0e0e10b535a5d286f366cd7d", size = 23804633, upload-time = "2026-11-20T16:06:36.581Z" },
-    { url = "https://files.pythonhosted.org/packages/de/45/08934185f592b783ad351d2be299d8a43ee2d144b89073099807dccc2c7e/py_rattler-0.29.0-cp310-abi3-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:eaa7d8471a8d033b8bee11f2cb3822d7a97c2f93bd2851e90e7afb52574292de", size = 29941082, upload-time = "2026-11-20T16:06:40.619Z" },
-    { url = "https://files.pythonhosted.org/packages/af/59/89ed4c25fe30d91d4888018d3228b31478a90913998327e43412982020a8/py_rattler-0.29.0-cp310-abi3-manylinux2014_ppc64.manylinux_2_17_ppc64.whl", hash = "sha256:a93a010a35f4e0b362658fd0275776dca7c7282543b731638fe80b8032aa5c9a", size = 38087871, upload-time = "2026-11-20T16:06:45.223Z" },
-    { url = "https://files.pythonhosted.org/packages/04/b5/056aac6c8a4bbcc60fc01c56acaf972c17d8a69e8fb16e93043c694d0832/py_rattler-0.29.0-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:0125c99183549cea1889595b95aa40cece2bbb60e1b867fbbaba188e014c9535", size = 25920503, upload-time = "2026-11-20T16:06:49.818Z" },
-    { url = "https://files.pythonhosted.org/packages/fc/7a/4e356ac597d0143e3c9cc6059b4c2e93ee8e0cdec0b56640f0cb4664a0d4/py_rattler-0.29.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:57b7b46e5991625b6d7866df5e5a0d422113fd3b81cbd2d849424986644718a6", size = 27718998, upload-time = "2026-11-20T16:06:54.071Z" },
-    { url = "https://files.pythonhosted.org/packages/c4/49/d52a5e10b5422b3c7a23d9c65a91861382dca78ed94d7682203afea372b7/py_rattler-0.29.0-cp310-abi3-manylinux_2_28_armv7l.whl", hash = "sha256:26dc0b0b1eaaa4d293ae2c4380d4b347bc6058cd1d45f074025adaf1fdfcd3db", size = 26876129, upload-time = "2026-11-20T16:06:58.178Z" },
-    { url = "https://files.pythonhosted.org/packages/a8/74/15aca594861a3f9daa8f779f3525b7834a77092702ae3e940dfae27db5b8/py_rattler-0.29.0-cp310-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:0a6ad7040ba756c27698ab5811f56b142327f1b8100fe73d7a8750a91bab5e4e", size = 36933835, upload-time = "2026-11-20T16:07:02.688Z" },
-    { url = "https://files.pythonhosted.org/packages/1e/49/a26156eb8eb9ec3ce0f357028c1f33b2f2b233dcc5aca640a45b12e84315/py_rattler-0.29.0-cp310-abi3-manylinux_2_31_riscv64.whl", hash = "sha256:22b1210ad966ba8d21e78fd2168d7d510aa6f470eb10fc5544c31bad00294e89", size = 28003752, upload-time = "2026-11-20T16:07:06.772Z" },
-    { url = "https://files.pythonhosted.org/packages/6c/21/22a5f7296d2e0370fac3744ff025d6a6369a1b888ba75b66dca0cd6ebbca/py_rattler-0.29.0-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:a7c625c8027886a38fe641a0949aea2024c295886248b4ce832726a0907a7b78", size = 27874360, upload-time = "2026-11-20T16:07:11.214Z" },
-    { url = "https://files.pythonhosted.org/packages/0c/e7/f42017dd0471429c4be4decd08329415877ca04547d79a2381d62e19b38b/py_rattler-0.29.0-cp310-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:977b70b576c9dbf50d74899ceaed9f0d3cfe92780960bd8004ef528df0b7fda4", size = 27036093, upload-time = "2026-11-20T16:07:15.091Z" },
-    { url = "https://files.pythonhosted.org/packages/c9/47/0e638121eb1dca183559577866f435ea698d3ebbb6e6086bdaf5f5af3cc9/py_rattler-0.29.0-cp310-abi3-musllinux_1_2_i686.whl", hash = "sha256:4a79c73f6b15c1f580550c0fe7307526215e6cdb56925b012f8806a573bb2152", size = 31006859, upload-time = "2026-11-20T16:07:19.802Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/cf/9b9fb16aab38cb760c9f0821302765c3b5788d445dd44cf2509b2eab97e8/py_rattler-0.29.0-cp310-abi3-musllinux_1_2_riscv64.whl", hash = "sha256:f9ca9012fa5b59c3f49c255d0e06e96d04c348087dda67f217551a2fc373b2ea", size = 28065303, upload-time = "2026-11-20T16:07:23.825Z" },
-    { url = "https://files.pythonhosted.org/packages/6f/ad/bb63cd61ff52df4145c89e23a875500f6f6fbbd86af33d81b6890e8ff296/py_rattler-0.29.0-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:46c4547b8b7dcffda97e1727f64d38ac4fe47cb0316faf63f6fcd59124c10d35", size = 28343425, upload-time = "2026-11-20T16:07:28.284Z" },
-    { url = "https://files.pythonhosted.org/packages/84/3c/bb5a3569ca236eeca182607016aa66f4f4d2494cdba3538442e14f261623/py_rattler-0.29.0-cp310-abi3-win32.whl", hash = "sha256:2924bfbbe05625646a6fb0621dc53b9aa6bab76b1cc90deaee898178caff895b", size = 19356908, upload-time = "2026-11-20T16:07:32.166Z" },
-    { url = "https://files.pythonhosted.org/packages/d3/5c/6ad604915f96b177c1fbfa3c13585496dd99538ed201487da96b08cac828/py_rattler-0.29.0-cp310-abi3-win_amd64.whl", hash = "sha256:4e7d9fe7d9bab498fdfaf06c39ff88cc4922bc48dc2c5ce33503c38165f8104c", size = 21825254, upload-time = "2026-11-20T16:07:36.181Z" },
-    { url = "https://files.pythonhosted.org/packages/8d/67/753a8ea0c8faa73a7ddb5328fad28d67c830026d503cb91df4dcf41f9c09/py_rattler-0.29.0-cp310-abi3-win_arm64.whl", hash = "sha256:37a60f9af18a3a67eeaad0ed005ee90443962a24530dd9c3f98f948cd8c42d59", size = 20441298, upload-time = "2026-11-20T16:07:40.231Z" },
-]
-
-[[package]]
 name = "py-zur-build"
 version = "0"
 source = { virtual = "." }
 dependencies = [
     { name = "patchelf", marker = "sys_platform == 'linux'" },
-    { name = "py-rattler" },
     { name = "pyelftools" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "auditwheel" },
     { name = "pytest" },
     { name = "pytest-randomly", version = "5.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pytest-randomly", version = "5.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -116,13 +104,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "patchelf", marker = "sys_platform == 'linux'", specifier = ">=0.17" },
-    { name = "py-rattler", specifier = ">=0.29" },
     { name = "pyelftools", specifier = ">=0.31" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "auditwheel", specifier = ">=6.2" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-randomly", specifier = ">=3.15" },
     { name = "ruff", specifier = ">=0.8" },
