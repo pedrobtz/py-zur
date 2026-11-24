@@ -335,6 +335,13 @@ binaries (§18):
   reference implementation gives the same numbers as CRAN's macOS and
   Windows builds; the cost is speed on heavy linear algebra against
   Posit's OpenBLAS.
+  P3M's RHEL 9 binaries link `libflexiblas.so.3` instead (§18.4: 9 of
+  16, BLAS/LAPACK symbols only). `lib/R/lib` also holds
+  `libflexiblas.so.3`: a library with no symbols of its own whose
+  `DT_NEEDED` are `libRlapack.so` and `libRblas.so`, so those packages
+  load R's reference BLAS and LAPACK with or without the host's
+  flexiblas. A package that calls the `flexiblas_*` API does not load;
+  none in the sample does. (2026-11-24, stage 11.)
 - **No OpenMP in R's own code (D17):** `--disable-openmp`. The
   toolset's static `libgomp.a` cannot be linked into a shared library
   (§18), and a private copy next to the host's would put two OpenMP
@@ -362,7 +369,8 @@ binaries (§18):
   `ldpaths` puts that directory on `LD_LIBRARY_PATH` for every package
   R loads, so a library there keeps its real SONAME and wins over the
   host's copy. It holds R's own libraries (`libR.so`, `libRblas.so`,
-  `libRlapack.so`) and the BLAS names below, nothing else.
+  `libRlapack.so`) and the three BLAS names below, six files and
+  nothing else (2026-11-24, stage 11).
 - **No compiler runtimes there.** `libgfortran.so.5`,
   `libquadmath.so.0` and `libgomp.so.1` are not shipped on the library
   path: the manylinux toolset links the system's gcc 8 runtime (§18),
@@ -373,8 +381,25 @@ binaries (§18):
 - **BLAS names.** R's reference BLAS and LAPACK are also shipped in
   `lib/R/lib` as `libblas.so.3` and `liblapack.so.3`, so P3M binaries
   load *and* numbers match CRAN's macOS and Windows (D16). Unlike the
-  compiler runtimes, shadowing a host BLAS breaks nothing: the
-  interface is stable.
+  compiler runtimes, shadowing a host BLAS breaks nothing for R's
+  packages: the interface is stable. 
+  P3M's RHEL 9 binaries link `libflexiblas.so.3` instead (§18.4: 9 of
+  16, BLAS/LAPACK symbols only). `lib/R/lib` also holds
+  `libflexiblas.so.3`: a library with no symbols of its own whose
+  `DT_NEEDED` are `libRlapack.so` and `libRblas.so`, so those packages
+  load R's reference BLAS and LAPACK with or without the host's
+  flexiblas. A package that calls the `flexiblas_*` API does not load;
+  none in the sample does.
+  Known limit (2026-11-24, stage 11): `lib/R/lib` is on
+  `LD_LIBRARY_PATH` for R's child processes too, so a host program
+  started from R that needs `cblas_*` or `flexiblas_*` symbols from
+  `libflexiblas.so.3` (for example RHEL's numpy) gets the shim, which
+  has neither, and fails to load. The `libblas.so.3` copy has the same
+  exposure on Debian, where a host program may expect a `cblas_*` symbol
+  from it.
+  The shim is built by `blas()` in `scripts/build.py` from an empty
+  source with `gcc -shared -nostdlib -Wl,--no-as-needed`; the repair
+  gives it `$ORIGIN` as RUNPATH like R's other libraries.
 - Only libraries R itself needs and no package links to are grafted
   with hashed names.
 - **System baseline:** the manylinux allowlist plus nothing else for R
@@ -549,6 +574,39 @@ How it behaves:
   the other cairo devices need it (§7), and whether a compiler is
   found. On Windows it reports whether Rtools is found: GitHub's
   Windows images list R but not Rtools (§18). Neither is a failure.
+
+Decided 2026-11-24 (stage 11), within the behaviour above:
+
+- **Code.** `src/zur/doctor.py`, copied into the wheel beside the
+  launcher; the `zur` console script (`zur = zur:main`) imports it only
+  when it runs, so `R` and `Rscript` start as before. `check()` returns
+  the report the first-run warning (stage 12) needs.
+- **Detection.** Each library is checked by asking the dynamic loader
+  for it (`ctypes.CDLL("libgomp.so.1")`), which is what a package's
+  `dyn.load()` does; each tool by looking it up on `PATH`. The family
+  comes from `/etc/os-release` read as text (no fallback, as in §5):
+  `ID`, then each `ID_LIKE` word, the first of `debian`/`ubuntu`
+  (Debian family) or `rhel`/`centos`/`fedora` (RHEL family) wins.
+- **Command.** One line, its steps joined by `&&`, each prefixed with
+  `sudo` when the effective user is not root: `apt-get update &&
+  apt-get install -y <packages>` (a fresh container has no package
+  lists) or `dnf install -y <packages>`. `--command` prints the line
+  for the first group only, or nothing when nothing is missing, so the
+  `eval` never installs a compiler; the report prints a second line for
+  the toolchain. On an unrecognised distribution `--command` prints
+  nothing on stdout and a one-line reason on stderr.
+- **Exit status.** 0 when the first group is complete, 1 when a library
+  is missing (with or without `--command`), 2 for a usage error
+  (argparse's own). `zur` with no command is a usage error.
+- **Report.** A header line (`zur doctor: <PRETTY_NAME> (<family>)`),
+  then each group with one line per file or tool, `missing`/`absent`
+  with its package (both families' on an unrecognised distribution) or
+  `found`, then the install lines only when something is missing.
+- **Test-only override.** `ZUR_OS_RELEASE` names another os-release
+  file, so the unrecognised branch is reached in a container.
+
+These are the roadmap's readings where §6.5 is silent; the maintainer may
+decide otherwise.
 
 **First-run warning.** On Linux, the first time `R` or `Rscript`
 starts, the launcher runs the same check. If anything is missing it
@@ -754,6 +812,13 @@ structure, so the column sums to the file's size:
 | everything else | 856 | 4,520,772 | 9,610,617 | 7.6% |
 | zip headers and directory | | 231,044 | | 0.4% |
 
+**With `zur doctor` and the `libflexiblas.so.3` shim, 2026-11-24
+(stage 11):** 59,311,902 bytes, 4,485 more than after stage 10
+(59,307,417, §18.3) and 688,098 bytes under the 60 MB target (run
+https://github.com/pedrobtz/py-zur/actions/runs/45359966280). R's
+libraries are 6 files, 10,907,847 bytes in the wheel and 32,058,038
+unpacked: the shim adds 13,497 bytes unpacked, 752 compressed.
+
 **What D14 saves, 2026-11-24 (stage 9):** the same commit built once
 with `pango-devel` installed (the `pango` dispatch input of `build.yml`,
 run https://github.com/pedrobtz/py-zur/actions/runs/45343819148) gives
@@ -857,7 +922,9 @@ Tests run against the installed tool and compare against known answers:
   R's base packages.
 - **Binary packages:** on Ubuntu, a set of P3M binaries chosen to cover
   plain C, C++ (`Rcpp`), Fortran and BLAS/LAPACK users installs and
-  loads, and each returns a known answer; CRAN binaries likewise on
+  loads, and each returns a known answer; on Rocky Linux 9 the BLAS
+  user loads with no host flexiblas and maps `libflexiblas.so.3` from
+  `R.home("lib")`; CRAN binaries likewise on
   Windows, and on macOS in zur's library, in a user-set `R_LIBS_USER`,
   in a `lib=` directory and under `--vanilla`, each time with exactly
   one `libR` image in the process, on a runner with and without a
@@ -878,7 +945,10 @@ Tests run against the installed tool and compare against known answers:
   succeeds; after running the line `zur doctor --command` prints, it
   exits 0 and a P3M `data.table` loads; on an image with those two
   libraries but no compiler it exits 0 and lists the toolchain as
-  absent; on a full image it prints nothing to install.
+  absent; on a full image it prints nothing to install. The check after
+  the printed line runs in `debian:13-slim`, since P3M's Debian 12
+  index has no `data.table` (§18.2); `debian:12-slim` runs the first
+  (2026-11-24, stage 11).
 - **First-run warning:** in a minimal container the first `Rscript -e
   1` prints the note on stderr and exits 0, and the second prints
   nothing; with `ZUR_NO_CHECK=1` the first prints nothing; on a full
@@ -904,6 +974,8 @@ Tests run against the installed tool and compare against known answers:
   (no fonts or CA bundle; its `tzdata` is deleted before the tests) and
   `rockylinux:8-minimal` (no `which`). The `pak` recipe runs in Debian
   13 instead of Debian 12, where P3M's coverage is partial (§18.2).
+  `zur doctor` and the RHEL 9 BLAS shim also run in Rocky Linux 9
+  (2026-11-24, stage 11).
 
 ## 14. Licensing
 
@@ -993,7 +1065,12 @@ the system profile `library/base/R/Rprofile` (§6.4).
 - **D14. Cairo without pango** on Linux (§6.2).
 - **D15. zur mirrors corresponding source** per version (§14).
 - **D16. Reference BLAS and LAPACK on Linux**, also under
-  `libblas.so.3` and `liblapack.so.3` (§6.2, §6.3).
+  `libblas.so.3` and `liblapack.so.3` (§6.2, §6.3), and as
+  `libflexiblas.so.3` (a shim onto R's two libraries) for P3M's RHEL 9
+  binaries. 2026-11-24 (stage 11). Rejected: listing `flexiblas` in
+  `zur doctor` (packages would mix R's BLAS with the host's LAPACK;
+  results differ by distribution), and a third copy of `libRlapack.so`
+  (size).
 - **D17. R's own code without OpenMP; Fortran runtime grafted** on
   Linux under a hashed name, used only by R's own libraries (§6.2).
   2026-11-24: the static runtime was the first choice and does not
@@ -1047,6 +1124,8 @@ not a decision.
 5. **RHEL-family survey.** §18's sample is Ubuntu 24.04 only; the same
    reading of `DT_NEEDED` for P3M's RHEL 8 and 9 binaries confirms
    `zur doctor`'s list there. Done as part of the `zur doctor` work.
+   Answered 2026-11-24 (stage 11): the list holds on RHEL 8 and 9;
+   RHEL 9's BLAS name is covered by D16, not by doctor (§18.4).
 6. Later: `rpy2` embedding as a supported, tested use; rig-like helpers
    for binary repositories and system requirements; registering with
    Positron's R discovery; offering `zur` to `ir`; zig for building C
@@ -1293,3 +1372,44 @@ for the Java lines, so nothing reads `CXX` without make. The MASS check
 24.04.
 The compiler legs take 45 to 54 s each; the wheel is unchanged in
 size (59,307,417 bytes).
+
+### 18.4 Measurements, 2026-11-24 (stage 11)
+
+**RHEL-family survey (§16 question 5).** `DT_NEEDED` of the shared
+objects of the same 16 packages as §18, P3M binaries for R 4.6 (`Built:
+R 4.6.0`) from `__linux__/centos8/latest` (P3M's RHEL 8 name; its
+`rhel8` index is empty) and `__linux__/rhel9/latest`, read on
+2026-11-24 with `scripts/elf_needed.py`. Every package is in both
+indexes, at the versions of §18.2's Ubuntu set (for example
+`RcppArmadillo` 15.8.0-1, `data.table` 1.18.6.1). Counts of packages:
+
+| Library | RHEL 8 (`centos8`) | RHEL 9 (`rhel9`) |
+| --- | --- | --- |
+| `libR.so` | 16 | 16 |
+| `libstdc++.so.6`, `libgcc_s.so.1` | 8 | 8 |
+| `libgfortran.so.5`, `libquadmath.so.0` | 9 | 9 |
+| `libgomp.so.1` (`data.table`, `mgcv`, `RcppArmadillo`) | 3 | 3 |
+| `libRblas.so` | 9 | 0 |
+| `libRlapack.so` | 8 | 0 |
+| `libflexiblas.so.3` | 0 | 9 |
+| `libz.so.1`, `liblzma.so.5` | 4, 2 | 3, 2 |
+| Package-declared (`libxml2`, `libglpk`, curl's; ICU 67 on RHEL 9) | 3 | 4 |
+
+The BLAS users, by package:
+
+| Package | RHEL 8 | RHEL 9 |
+| --- | --- | --- |
+| `Matrix`, `quantreg`, `robustbase`, `mgcv`, `nloptr`, `RcppEigen`, `RcppArmadillo`, `igraph` | `libRblas.so`, `libRlapack.so` | `libflexiblas.so.3` |
+| `deSolve` | `libRblas.so` | `libflexiblas.so.3` |
+| the other seven | none | none |
+
+So on both the libraries no package declares and the wheel does not
+ship are `libgomp.so.1` and `libgfortran.so.5` (with `libquadmath.so.0`,
+which the `libgfortran` package requires): `zur doctor`'s list holds.
+RHEL 8's BLAS users link R's own names, which `lib/R/lib` has. RHEL 9's
+link `libflexiblas.so.3`, which neither the wheel nor a bare RHEL 9 had;
+none of the nine references a `flexiblas_*` or `cblas_*` symbol, and
+`RcppArmadillo`'s binary asks for no symbol version, so the shim of §6.3
+(D16, decided on [#12](https://github.com/pedrobtz/py-zur/issues/12))
+covers them. RHEL 8's `curl` links its own OpenSSL 1.1 and Kerberos
+libraries, RHEL 9's links `libcurl.so.4`; both are package-declared.

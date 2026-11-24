@@ -13,13 +13,14 @@ as built, for tests/test_prefix.py):
 1. relocate  R's text files that name the build prefix; bin/Rscript
              becomes a script that finds its R (design §5)
 2. fonts     a font family and the fontconfig file naming it (§6.4)
-3. blas      libblas.so.3 and liblapack.so.3 next to R's own (D16)
+3. blas      libblas.so.3 and liblapack.so.3 next to R's own, and the
+             libflexiblas.so.3 shim onto them (D16)
 4. repair    graft every library outside the system baseline into
              zur.libs/ under a hashed name; $ORIGIN-relative RUNPATHs
 5. prune     what a headless R does not use (design §9, D6, D19)
 6. scrub     build-prefix strings compiled into ELF files
 7. dedupe    symlinks, which wheels cannot hold
-8. pack      the copy and the launcher into a wheel, checked against
+8. pack      the copy, the launcher and zur doctor into a wheel, checked against
              --max-size (PyPI's per-file limit by default, design §10);
              --size-report prints its size by part
 
@@ -77,6 +78,10 @@ SYSTEM_DIRS = [Path("/usr/lib64"), Path("/lib64")]
 # link (D16).
 R_LIBS = ["libR.so", "libRblas.so", "libRlapack.so"]
 BLAS_NAMES = {"libblas.so.3": "libRblas.so", "liblapack.so.3": "libRlapack.so"}
+# The FlexiBLAS name P3M's RHEL 9 binaries link, and what the shim built
+# under it loads, in this order (design §6.3, D16).
+BLAS_SHIM = "libflexiblas.so.3"
+BLAS_SHIM_NEEDED = ["libRlapack.so", "libRblas.so"]
 
 
 def read_r_source():
@@ -472,12 +477,37 @@ def fonts(runtime, source=FONT_SOURCE):
 # 3. blas ---------------------------------------------------------------------
 
 
-def blas(runtime):
-    """libblas.so.3 and liblapack.so.3: copies of R's, under those SONAMEs."""
+def blas(runtime, cc="gcc"):
+    """R's BLAS and LAPACK under the names P3M binaries link (D16).
+
+    libblas.so.3 and liblapack.so.3 are copies of R's under those
+    SONAMEs. libflexiblas.so.3, which P3M's RHEL 9 binaries link
+    instead (design §18.4), is a shim: no code and no symbols of its own,
+    only DT_NEEDED entries for libRlapack.so and libRblas.so, so loading
+    it loads R's two libraries (design §6.3).
+    """
     lib = runtime / "lib/R/lib"
     for name, source in BLAS_NAMES.items():
         shutil.copy2(lib / source, lib / name)
         patchelf("--set-soname", name, lib / name)
+    with tempfile.TemporaryDirectory() as tmp:
+        empty = Path(tmp) / "empty.c"
+        empty.write_text("")
+        subprocess.run(
+            [
+                cc,
+                "-shared",
+                "-nostdlib",
+                "-Wl,--no-as-needed",
+                f"-Wl,-soname,{BLAS_SHIM}",
+                "-o",
+                str(lib / BLAS_SHIM),
+                str(empty),
+                f"-L{lib}",
+                *(f"-l:{n}" for n in BLAS_SHIM_NEEDED),
+            ],
+            check=True,
+        )
 
 
 # 4. repair -------------------------------------------------------------------
@@ -677,11 +707,18 @@ def _record(data):
     return "sha256=" + digest.rstrip(b"=").decode()
 
 
+# The modules of src/zur besides the launcher, copied into the wheel.
+MODULES = ["doctor.py"]
+
+
 def pack(stage, out, version, tag):
     package = stage / "zur"
     launcher = (REPO / "src/zur/__init__.py").read_text()
     launcher = _replace_once(launcher, '"0+unknown"', json.dumps(version), "launcher")
     (package / "__init__.py").write_text(launcher)
+    # The rest of the package as it is: zur doctor (design §6.5).
+    for module in MODULES:
+        shutil.copyfile(REPO / "src/zur" / module, package / module)
 
     dist_info = stage / f"zur-{version}.dist-info"
     dist_info.mkdir()
@@ -702,7 +739,7 @@ def pack(stage, out, version, tag):
         f"Tag: py3-none-{tag}\n"
     )
     (dist_info / "entry_points.txt").write_text(
-        "[console_scripts]\nR = zur:R\nRscript = zur:Rscript\n"
+        "[console_scripts]\nR = zur:R\nRscript = zur:Rscript\nzur = zur:main\n"
     )
 
     out.mkdir(parents=True, exist_ok=True)

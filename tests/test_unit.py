@@ -1178,3 +1178,363 @@ def test_deps_installs_pango_devel_only_for_the_measurement(fake_dnf):
     assert result.returncode == 0, result.stderr
     assert calls[-1] == "install -y pango-devel"
     assert "for the D14 measurement only" in result.stderr
+
+
+# zur doctor (roadmap stage 11, design §6.5) ------------------------------------
+
+doctor = load_module("zur_doctor", REPO / "src/zur/doctor.py")
+
+# The CI containers' /etc/os-release (from bin/R's checks above), Fedora
+# and Mint as their images ship it, and two distributions of neither family.
+DOCTOR_RELEASES = {
+    "ubuntu:24.04": UBUNTU,
+    "debian:12": DEBIAN,
+    "rockylinux:8": ROCKY,
+    "fedora:45": 'NAME="Fedora Linux"\nVERSION_ID=45\nID=fedora\n',
+    "linuxmint": "ID=linuxmint\nID_LIKE='ubuntu debian'\n",
+    "opensuse": 'ID="opensuse-leap"\nID_LIKE="suse opensuse"\nVERSION_ID="15.6"\n',
+    "alpine": "ID=alpine\nVERSION_ID=3.20.3\n",
+}
+FAMILY_OF = {
+    "ubuntu:24.04": "debian",
+    "debian:12": "debian",
+    "rockylinux:8": "rhel",
+    "fedora:45": "rhel",
+    "linuxmint": "debian",
+    "opensuse": None,
+    "alpine": None,
+}
+
+# The packages that provide each file, from each family's own package
+# index: Debian's packages.debian.org (bookworm, trixie) and Ubuntu's
+# (noble) list libgomp.so.1 in libgomp1 and libgfortran.so.5 in
+# libgfortran5; RHEL 8 and 9's BaseOS lists them in libgomp and
+# libgfortran (design §18.4). The tools' packages likewise.
+PROVIDERS = {
+    "debian": {
+        "libgomp.so.1": "libgomp1",
+        "libgfortran.so.5": "libgfortran5",
+        "gcc": "gcc",
+        "g++": "g++",
+        "gfortran": "gfortran",
+        "make": "make",
+    },
+    "rhel": {
+        "libgomp.so.1": "libgomp",
+        "libgfortran.so.5": "libgfortran",
+        "gcc": "gcc",
+        "g++": "gcc-c++",
+        "gfortran": "gcc-gfortran",
+        "make": "make",
+    },
+}
+
+
+def doctor_release(tmp_path, name):
+    path = tmp_path / "os-release"
+    path.write_text(DOCTOR_RELEASES[name])
+    return doctor.read_os_release(path)
+
+
+def report(tmp_path, name, runtimes=(), tools=(), root=True):
+    """A report on distribution ``name`` with ``runtimes`` and ``tools`` absent."""
+    return doctor.check(
+        doctor_release(tmp_path, name) if name else {},
+        find=lambda lib: lib not in runtimes,
+        which=lambda tool: None if tool in tools else f"/usr/bin/{tool}",
+        root=root,
+    )
+
+
+def test_doctor_checks_the_files_p3m_binaries_link():
+    # Design §6.5, §18 and §18.4: of what P3M binaries link, only these
+    # two are neither in the wheel nor on a bare system.
+    assert doctor.RUNTIMES == ("libgomp.so.1", "libgfortran.so.5")
+    assert doctor.TOOLCHAIN == ("gcc", "g++", "gfortran", "make")
+
+
+def test_doctor_tables_name_each_familys_packages():
+    for fam, providers in PROVIDERS.items():
+        assert doctor.FAMILIES[fam]["packages"] == providers
+
+
+@pytest.mark.parametrize("name", sorted(DOCTOR_RELEASES))
+def test_doctor_family_from_os_release(tmp_path, name):
+    assert doctor.family(doctor_release(tmp_path, name)) == FAMILY_OF[name]
+
+
+def test_doctor_without_os_release_is_unrecognised(tmp_path):
+    assert doctor.read_os_release(tmp_path / "none") == {}
+    assert doctor.family({}) is None
+
+
+def test_doctor_os_release_override(tmp_path, monkeypatch):
+    path = tmp_path / "os-release"
+    path.write_text(DOCTOR_RELEASES["opensuse"])
+    monkeypatch.setenv("ZUR_OS_RELEASE", str(path))
+    assert doctor.read_os_release()["ID"] == "opensuse-leap"
+    monkeypatch.setenv("ZUR_OS_RELEASE", "")
+    assert doctor.read_os_release() == doctor.read_os_release("/etc/os-release")
+
+
+def test_doctor_reads_os_release_without_running_it(tmp_path):
+    path = tmp_path / "os-release"
+    path.write_text(
+        "# comment\nID='debian'\nVERSION_ID=\"12\"\nNAME=$(touch x)\n\nID_LIKE"
+    )
+    assert doctor.read_os_release(path) == {
+        "ID": "debian",
+        "VERSION_ID": "12",
+        "NAME": "$(touch x)",
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "missing", "expected"),
+    [
+        (
+            "debian:12",
+            ["libgomp.so.1", "libgfortran.so.5"],
+            "apt-get update && apt-get install -y libgomp1 libgfortran5",
+        ),
+        (
+            "ubuntu:24.04",
+            ["libgfortran.so.5"],
+            "apt-get update && apt-get install -y libgfortran5",
+        ),
+        (
+            "rockylinux:8",
+            ["libgomp.so.1", "libgfortran.so.5"],
+            "dnf install -y libgomp libgfortran",
+        ),
+        ("fedora:45", ["libgomp.so.1"], "dnf install -y libgomp"),
+        ("debian:12", [], ""),
+        ("opensuse", ["libgomp.so.1"], ""),
+    ],
+)
+def test_doctor_command(tmp_path, name, missing, expected):
+    r = report(tmp_path, name, runtimes=missing)
+    assert r.command == expected
+    assert r.status == (1 if missing else 0)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            "debian:12",
+            "sudo apt-get update && sudo apt-get install -y libgomp1 libgfortran5",
+        ),
+        ("rockylinux:8", "sudo dnf install -y libgomp libgfortran"),
+    ],
+)
+def test_doctor_command_has_sudo_only_when_not_root(tmp_path, name, expected):
+    runtimes = doctor.RUNTIMES
+    assert report(tmp_path, name, runtimes, root=False).command == expected
+    assert report(tmp_path, name, runtimes, root=True).command == expected.replace(
+        "sudo ", ""
+    )
+
+
+def test_doctor_root_is_the_effective_user(tmp_path, monkeypatch):
+    monkeypatch.setattr(doctor.os, "geteuid", lambda: 1000)
+    assert doctor.check({"ID": "debian"}, find=lambda _: False).command.startswith(
+        "sudo "
+    )
+    monkeypatch.setattr(doctor.os, "geteuid", lambda: 0)
+    assert doctor.check({"ID": "debian"}, find=lambda _: False).command.startswith(
+        "apt-get "
+    )
+
+
+def test_doctor_toolchain_never_changes_the_status(tmp_path):
+    r = report(tmp_path, "ubuntu:24.04", tools=doctor.TOOLCHAIN)
+    assert r.status == 0 and r.command == ""
+    assert r.toolchain_command == (
+        "apt-get update && apt-get install -y gcc g++ gfortran make"
+    )
+    r = report(tmp_path, "rockylinux:8", tools=["g++", "gfortran"])
+    assert r.toolchain_command == "dnf install -y gcc-c++ gcc-gfortran"
+
+
+def test_doctor_report_with_everything_missing(tmp_path):
+    r = report(tmp_path, "debian:12", doctor.RUNTIMES, doctor.TOOLCHAIN, root=False)
+    assert doctor.format_report(r) == textwrap.dedent(
+        """\
+        zur doctor: Debian GNU/Linux 12 (bookworm) (Debian family)
+
+        To load binary packages:
+          missing  libgomp.so.1      (libgomp1)
+          missing  libgfortran.so.5  (libgfortran5)
+
+        To compile source packages (not required):
+          absent   gcc       (gcc)
+          absent   g++       (g++)
+          absent   gfortran  (gfortran)
+          absent   make      (make)
+
+        To install what binary packages need, run:
+          sudo apt-get update && sudo apt-get install -y libgomp1 libgfortran5
+        To compile source packages, run:
+          sudo apt-get update && sudo apt-get install -y gcc g++ gfortran make
+        """
+    )
+
+
+def test_doctor_report_with_nothing_missing(tmp_path):
+    text = doctor.format_report(report(tmp_path, "rockylinux:8"))
+    assert text == textwrap.dedent(
+        """\
+        zur doctor: Rocky Linux 8.10 (Green Obsidian) (RHEL family)
+
+        To load binary packages:
+          found    libgomp.so.1
+          found    libgfortran.so.5
+
+        To compile source packages (not required):
+          found    gcc
+          found    g++
+          found    gfortran
+          found    make
+        """
+    )
+    assert "install" not in text
+
+
+def test_doctor_report_on_an_unrecognised_distribution(tmp_path):
+    r = report(tmp_path, "opensuse", ["libgfortran.so.5"], ["make"])
+    assert r.status == 1 and r.command == "" and r.toolchain_command == ""
+    assert doctor.format_report(r) == textwrap.dedent(
+        """\
+        zur doctor: opensuse-leap 15.6 (unrecognised distribution)
+
+        To load binary packages:
+          found    libgomp.so.1
+          missing  libgfortran.so.5  (Debian: libgfortran5, RHEL: libgfortran)
+
+        To compile source packages (not required):
+          found    gcc
+          found    g++
+          found    gfortran
+          absent   make      (Debian: make, RHEL: make)
+
+        No install command for this distribution. On the Debian and
+        RHEL families, the packages named above provide these files.
+        """
+    )
+
+
+def test_doctor_report_without_os_release(tmp_path):
+    r = report(tmp_path, None, ["libgomp.so.1"])
+    first = doctor.format_report(r).splitlines()[0]
+    assert first == "zur doctor: no os-release (unrecognised distribution)"
+
+
+def test_doctor_finds_a_library_the_loader_has():
+    present = "libc.so.6" if sys.platform == "linux" else "libSystem.B.dylib"
+    assert doctor.loadable(present)
+    assert not doctor.loadable("libzur-does-not-exist.so.0")
+    assert doctor.missing_runtimes(find=lambda lib: lib == "libgomp.so.1") == [
+        "libgfortran.so.5"
+    ]
+
+
+@pytest.fixture
+def os_release_file(tmp_path):
+    def write(name):
+        path = tmp_path / f"os-release-{name.replace(':', '-')}"
+        path.write_text(DOCTOR_RELEASES[name])
+        return path
+
+    return write
+
+
+@pytest.fixture
+def run_doctor(monkeypatch, capsys, os_release_file):
+    def run(argv, name="debian:12", missing=()):
+        def check():
+            return doctor.Report(
+                doctor.read_os_release(os_release_file(name)),
+                doctor.missing_runtimes(lambda lib: lib not in missing),
+                [],
+                True,
+            )
+
+        monkeypatch.setattr(doctor, "check", check)
+        status = doctor.main(argv)
+        out, err = capsys.readouterr()
+        return status, out, err
+
+    return run
+
+
+def test_doctor_command_option_prints_the_line_alone(run_doctor):
+    status, out, err = run_doctor(["doctor", "--command"], missing=doctor.RUNTIMES)
+    assert (status, out, err) == (
+        1,
+        "apt-get update && apt-get install -y libgomp1 libgfortran5\n",
+        "",
+    )
+
+
+def test_doctor_command_option_prints_nothing_when_nothing_is_missing(run_doctor):
+    assert run_doctor(["doctor", "--command"]) == (0, "", "")
+
+
+def test_doctor_command_option_on_an_unrecognised_distribution(run_doctor):
+    status, out, err = run_doctor(
+        ["doctor", "--command"], name="alpine", missing=["libgomp.so.1"]
+    )
+    assert (status, out) == (1, "")
+    assert "no install command for this distribution" in err
+
+
+def test_doctor_prints_the_report(run_doctor):
+    status, out, err = run_doctor(["doctor"], missing=["libgomp.so.1"])
+    assert status == 1 and err == ""
+    assert "  missing  libgomp.so.1      (libgomp1)\n" in out
+
+
+@pytest.mark.parametrize(
+    "argv", [[], ["doctor", "--bogus"], ["repair"], ["doctor", "extra"]]
+)
+def test_zur_refuses_other_arguments(run_doctor, argv):
+    with pytest.raises(SystemExit) as exit:
+        run_doctor(argv)
+    assert exit.value.code == 2
+
+
+def test_zur_entry_point_exits_with_the_doctors_status(monkeypatch):
+    import types
+
+    fake = types.ModuleType("zur.doctor")
+    fake.main = lambda: 1
+    package = types.ModuleType("zur")
+    package.doctor = fake
+    monkeypatch.setitem(sys.modules, "zur", package)
+    monkeypatch.setitem(sys.modules, "zur.doctor", fake)
+    with pytest.raises(SystemExit) as exit:
+        launcher.main()
+    assert exit.value.code == 1
+
+
+def test_launcher_does_not_import_the_doctor():
+    # R and Rscript start through the launcher; zur doctor's code is read
+    # only by the zur command.
+    code = (
+        "import sys; sys.path.insert(0, 'src'); import zur;"
+        " print('zur.doctor' in sys.modules, 'argparse' in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert out == "False False\n"
+
+
+def test_build_copies_every_module_of_the_package():
+    modules = sorted(p.name for p in (REPO / "src/zur").glob("*.py"))
+    assert ["__init__.py", *build.MODULES] == modules

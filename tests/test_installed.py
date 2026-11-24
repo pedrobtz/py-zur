@@ -7,7 +7,10 @@ zur's:
     uv run pytest tests/test_installed.py
 
 Every check compares against a known answer rather than only running code.
-Set ZUR_OFFLINE=1 to skip the network check. In CI, ZUR_CONTAINER names
+Set ZUR_OFFLINE=1 to skip the network check. ZUR_DOCTOR (missing,
+runtimes or full) runs the zur doctor checks of that state, and
+ZUR_FLEXIBLAS (absent or present) the RHEL 9 BLAS shim check, both in
+the doctor job. In CI, ZUR_CONTAINER names
 the image the tests run in (the matrix of build.yml), so the checks of
 what a minimal image lacks know where they are; ZUR_EXPECT_NO_CA_BUNDLE=1
 runs the no-bundle check, before the workflow installs one. ZUR_WHEEL
@@ -576,6 +579,214 @@ def test_pak_installs_system_requirements(pak_recipe):
     assert has_libxml2()
     assert rout('xml2::xml_text(xml2::read_xml("<a>1</a>"))') == "1"
     assert_p3m_binary("xml2", result.stdout + result.stderr)
+
+
+@pak
+@pytest.mark.skipif(
+    os.environ.get("ZUR_FLEXIBLAS") not in ("absent", "present"),
+    reason="needs ZUR_FLEXIBLAS=absent or present: the Rocky Linux 9 leg",
+)
+def test_pak_flexiblas_user_maps_rs_blas_shim(pak_recipe, r_home):
+    # Design §6.3, D16, §18.4: P3M's RHEL 9 RcppArmadillo links
+    # libflexiblas.so.3. zur's shim of that name loads R's own BLAS and
+    # LAPACK, with or without the host's flexiblas, which it shadows.
+    host = Path("/usr/lib64/libflexiblas.so.3")
+    assert host.exists() == (os.environ["ZUR_FLEXIBLAS"] == "present")
+    _, recipe = pak_recipe
+    assert recipe.returncode == 0, recipe.stdout + recipe.stderr
+    result = run(["Rscript", "-e", pak_install("RcppArmadillo")], timeout=900)
+    log = result.stdout + result.stderr
+    assert result.returncode == 0, log
+    assert_p3m_binary("RcppArmadillo", log)
+    so = rout('system.file("libs", "RcppArmadillo.so", package = "RcppArmadillo")')
+    assert "libflexiblas.so.3" in elf_needed(Path(so))
+    code, expected = BINARY_SET["RcppArmadillo"]
+    assert rscript(code).stdout == expected
+    code = (
+        "invisible(loadNamespace('RcppArmadillo'));"
+        " m <- readLines('/proc/self/maps');"
+        " m <- m[grepl('/lib[^/]*(blas|lapack)[^/]*[.]so', m) &"
+        " !grepl('/libR(blas|lapack)[.]so$', m)];"
+        " cat(unique(sub('^.* ', '', m)), sep = '\\n')"
+    )
+    mapped = {Path(p).resolve() for p in rscript(code).stdout.split()}
+    assert mapped == {(r_home / "lib").resolve() / "libflexiblas.so.3"}
+
+
+def elf_needed(path):
+    from elftools.elf.dynamic import DynamicSection
+    from elftools.elf.elffile import ELFFile
+
+    with path.open("rb") as f:
+        return [
+            tag.needed
+            for section in ELFFile(f).iter_sections()
+            if isinstance(section, DynamicSection)
+            for tag in section.iter_tags()
+            if tag.entry.d_tag == "DT_NEEDED"
+        ]
+
+
+# zur doctor (design §6.5, §13) -----------------------------------------------
+#
+# ZUR_DOCTOR names what the doctor job's container holds at that step:
+# "missing" (neither runtime installed: the bare image), "runtimes" (both,
+# no compiler: after `eval "$(zur doctor --command)"`, or installed by
+# the job) or "full" (both and the whole toolchain). The package manager
+# is the oracle for what is installed.
+
+DOCTOR = os.environ.get("ZUR_DOCTOR", "")
+FAMILIES = {"ubuntu": "debian", "debian": "debian", "rocky": "rhel"}
+RUNTIME_FILES = ["libgomp.so.1", "libgfortran.so.5"]
+RUNTIME_PACKAGES = {
+    "debian": ["libgomp1", "libgfortran5"],
+    "rhel": ["libgomp", "libgfortran"],
+}
+INSTALL = {"debian": "apt-get update && apt-get install -y", "rhel": "dnf install -y"}
+TOOLS = ["gcc", "g++", "gfortran", "make"]
+
+
+def doctor_case(case):
+    return pytest.mark.skipif(DOCTOR != case, reason=f"needs ZUR_DOCTOR={case}")
+
+
+def zur(*args, **kwargs):
+    return run(["zur", *args], **kwargs)
+
+
+def host_family():
+    return FAMILIES[os_release_id()]
+
+
+def installed(package):
+    if host_family() == "debian":
+        status = run(["dpkg-query", "-W", "-f=${Status}", package]).stdout
+        return status == "install ok installed"
+    return run(["rpm", "-q", package]).returncode == 0
+
+
+def assert_doctor_output(result):
+    # Whatever the case: zur never mentions a BLAS (D16 covers RHEL 9's).
+    assert "flexiblas" not in (result.stdout + result.stderr).lower()
+    assert result.stderr == ""
+
+
+def test_doctor_agrees_with_the_package_manager():
+    # Every container of every job: the first group is what the package
+    # manager says is not installed, the command installs exactly that,
+    # and the exit status follows the first group alone.
+    fam = host_family()
+    absent = [p for p in RUNTIME_PACKAGES[fam] if not installed(p)]
+    report = zur("doctor")
+    assert_doctor_output(report)
+    assert report.returncode == (1 if absent else 0), report.stdout
+    for file, package in zip(RUNTIME_FILES, RUNTIME_PACKAGES[fam], strict=True):
+        state = "missing" if package in absent else "found  "
+        assert re.search(rf"^  {state}  {re.escape(file)}\b", report.stdout, re.M)
+    command = zur("doctor", "--command")
+    assert command.returncode == report.returncode
+    line = f"{INSTALL[fam]} {' '.join(absent)}" if absent else ""
+    if line and os.getuid() != 0:
+        line = " && ".join(f"sudo {step}" for step in line.split(" && "))
+    assert command.stdout == (line + "\n" if line else "")
+
+
+# What each bare image lacks. rockylinux:9 ships libgomp already (rpm -q,
+# 2026-11-24), so only libgfortran is missing there.
+BARE_ABSENT = {"rockylinux:9": ["libgfortran.so.5"]}
+
+
+def bare_absent():
+    """(file names, packages) the bare image lacks, in RUNTIMES order."""
+    files = BARE_ABSENT.get(CONTAINER, RUNTIME_FILES)
+    names = dict(zip(RUNTIME_FILES, RUNTIME_PACKAGES[host_family()], strict=True))
+    return files, [names[f] for f in files]
+
+
+@doctor_case("missing")
+def test_doctor_names_the_missing_runtimes():
+    fam = host_family()
+    files, packages = bare_absent()
+    # What the image lacks, by its package manager (for debian:13-slim,
+    # the check the stage asked for before the eval).
+    absent = [p for p in RUNTIME_PACKAGES[fam] if not installed(p)]
+    assert absent == packages
+    report = zur("doctor")
+    assert_doctor_output(report)
+    assert report.returncode == 1
+    for file, package in zip(files, packages, strict=True):
+        assert f"  missing  {file:<16}  ({package})\n" in report.stdout
+    if os.getuid() == 0:
+        line = f"{INSTALL[fam]} {' '.join(packages)}"
+        assert f"\n  {line}\n" in report.stdout
+        assert zur("doctor", "--command").stdout == line + "\n"
+    # R itself needs neither.
+    assert run(["Rscript", "-e", "1"]).returncode == 0
+
+
+@doctor_case("missing")
+@pytest.mark.skipif(os.getuid() != 0, reason="starts the doctor as another user")
+def test_doctor_command_has_sudo_only_when_not_root():
+    fam = host_family()
+    line = f"{INSTALL[fam]} {' '.join(bare_absent()[1])}"
+    as_root = zur("doctor", "--command")
+    assert as_root.stdout == line + "\n"
+    assert not as_root.stdout.startswith("sudo")
+    exe = shutil.which("zur")
+    as_user = run(
+        [exe, "doctor", "--command"], user=65534, group=65534, extra_groups=[]
+    )
+    assert as_user.returncode == 1, as_user.stderr
+    sudo = " && ".join(f"sudo {step}" for step in line.split(" && "))
+    assert as_user.stdout == sudo + "\n"
+
+
+@doctor_case("missing")
+def test_doctor_on_an_unrecognised_distribution(tmp_path):
+    release = tmp_path / "os-release"
+    release.write_text('ID=alpine\nVERSION_ID=3.20.3\nPRETTY_NAME="Alpine Linux"\n')
+    env = {**os.environ, "ZUR_OS_RELEASE": str(release)}
+    report = zur("doctor", env=env)
+    assert_doctor_output(report)
+    assert report.returncode == 1
+    assert "(unrecognised distribution)" in report.stdout.splitlines()[0]
+    files, _ = bare_absent()
+    for file, deb, rpm in zip(RUNTIME_FILES, *RUNTIME_PACKAGES.values(), strict=True):
+        line = f"  missing  {file:<16}  (Debian: {deb}, RHEL: {rpm})\n"
+        assert (line in report.stdout) == (file in files)
+    assert "apt-get" not in report.stdout and "dnf" not in report.stdout
+    command = zur("doctor", "--command", env=env)
+    assert (command.returncode, command.stdout) == (1, "")
+    assert "no install command for this distribution" in command.stderr
+
+
+@doctor_case("runtimes")
+def test_doctor_passes_with_the_runtimes_and_no_compiler():
+    fam = host_family()
+    assert all(installed(p) for p in RUNTIME_PACKAGES[fam])
+    assert [t for t in TOOLS if shutil.which(t)] == []
+    report = zur("doctor")
+    assert_doctor_output(report)
+    assert report.returncode == 0
+    for tool in TOOLS:
+        assert re.search(rf"^  absent   {re.escape(tool)} ", report.stdout, re.M)
+    assert "To compile source packages, run:" in report.stdout
+    assert "To install what binary packages need" not in report.stdout
+    assert zur("doctor", "--command").stdout == ""
+
+
+@doctor_case("full")
+def test_doctor_on_a_full_image_has_nothing_to_install():
+    fam = host_family()
+    assert all(installed(p) for p in RUNTIME_PACKAGES[fam])
+    assert all(shutil.which(t) for t in TOOLS)
+    report = zur("doctor")
+    assert_doctor_output(report)
+    assert report.returncode == 0
+    assert "missing" not in report.stdout and "absent" not in report.stdout
+    assert "run:" not in report.stdout
+    command = zur("doctor", "--command")
+    assert (command.returncode, command.stdout) == (0, "")
 
 
 # Base R ----------------------------------------------------------------------
