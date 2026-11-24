@@ -334,6 +334,91 @@ jobs:
           k="$k or https_download or user_library_is_zurs_own"
           ZUR_PAK=1 uv run pytest -v tests/test_installed.py -k "$k"
 
+  # zur doctor (roadmap stage 11, design §6.5, §13) and the RHEL 9 BLAS
+  # shim (D16), one container per starting state. ZUR_DOCTOR tells the
+  # tests what the container holds at each step; the package manager is
+  # their oracle. The bare images first ("missing"), then the line
+  # `zur doctor --command` prints is run, and they hold the runtimes and
+  # no compiler ("runtimes"): debian:13-slim then installs data.table with
+  # the §6.6 recipe (P3M's bookworm index has none, §18.2); rockylinux:9
+  # loads its RcppArmadillo, which links libflexiblas.so.3, without and
+  # then with the host's flexiblas. debian:12-slim stops after "missing".
+  doctor-linux-x86_64:
+    needs: build-linux-x86_64
+    if: ${{ !inputs.pango }}
+    runs-on: ubuntu-latest
+    name: doctor-linux-x86_64 (${{ matrix.case }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { case: debian-12-slim, image: "debian:12-slim", start: missing }
+          - { case: debian-13-slim, image: "debian:13-slim", start: missing }
+          - { case: rockylinux-8, image: "rockylinux:8", start: missing }
+          - { case: rockylinux-9, image: "rockylinux:9", start: missing }
+          - { case: ubuntu-24.04-runtimes, image: "ubuntu:24.04", start: runtimes }
+          - { case: ubuntu-24.04-full, image: "ubuntu:24.04", start: full }
+    container: ${{ matrix.image }}
+    env:
+      ZUR_CONTAINER: ${{ matrix.image }}
+      CASE: ${{ matrix.case }}
+    steps:
+      # tar, gzip: the checkout and setup-uv actions unpack with them.
+      - name: Starting state
+        run: |
+          case "$CASE" in
+            rockylinux-*) dnf install -y tar gzip ;;
+            ubuntu-24.04-runtimes)
+              apt-get update
+              apt-get install -y --no-install-recommends libgomp1 libgfortran5
+              ;;
+            ubuntu-24.04-full)
+              apt-get update
+              apt-get install -y --no-install-recommends build-essential gfortran
+              ;;
+          esac
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
+      - name: Install zur as a uv tool
+        run: |
+          uv tool install dist/zur-*.whl
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+      - name: zur doctor (${{ matrix.start }})
+        run: |
+          zur doctor || true
+          ZUR_DOCTOR=${{ matrix.start }} uv run pytest -v tests/test_installed.py -k doctor
+      - name: Run the line zur doctor --command prints
+        if: matrix.start == 'missing' && matrix.case != 'debian-12-slim'
+        run: |
+          zur doctor --command | tee -a "$GITHUB_STEP_SUMMARY"
+          eval "$(zur doctor --command)"
+          zur doctor
+      # The CA bundle HTTPS needs (roadmap stage 6 note).
+      - name: CA bundle
+        if: matrix.case == 'debian-13-slim'
+        run: apt-get install -y --no-install-recommends ca-certificates
+      - name: zur doctor after the line, and the pak recipe
+        if: matrix.case == 'debian-13-slim' || matrix.case == 'rockylinux-8'
+        run: |
+          k="doctor"
+          [ "$CASE" = debian-13-slim ] && k="$k or pak_recipe_installs"
+          ZUR_DOCTOR=runtimes ZUR_PAK=1 uv run pytest -v tests/test_installed.py -k "$k"
+      - name: zur doctor after the line, and the BLAS shim without flexiblas
+        if: matrix.case == 'rockylinux-9'
+        run: |
+          k="doctor or pak_recipe_installs or flexiblas"
+          ZUR_DOCTOR=runtimes ZUR_PAK=1 ZUR_FLEXIBLAS=absent \
+            uv run pytest -v tests/test_installed.py -k "$k"
+      - name: The BLAS shim with the host's flexiblas
+        if: matrix.case == 'rockylinux-9'
+        run: |
+          dnf install -y flexiblas
+          ZUR_PAK=1 ZUR_FLEXIBLAS=present uv run pytest -v tests/test_installed.py -k flexiblas
+
   # Full profile. Every job here has `needs: profile` and
   # `if: needs.profile.outputs.full == 'true'`. The other platforms' legs
   # (stages 20 to 23) join here.

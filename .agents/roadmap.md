@@ -353,6 +353,8 @@ with nothing pointing at the build.
 - `lib/R/lib` holds exactly `libR.so`, `libRblas.so`, `libRlapack.so`,
   and copies of the last two as `libblas.so.3` and `liblapack.so.3`
   (D16). No compiler runtime anywhere on the library path (D11).
+  Corrected 2026-11-24 (stage 11): a sixth file, the
+  `libflexiblas.so.3` shim onto R's BLAS and LAPACK (D16, design §6.3).
 - Relocation from the prototype, adapted: `bin/R` computes `R_HOME`
   from its own location and exports `RHOME`; `etc/Makeconf`,
   `etc/Renviron`, `etc/ldpaths` lose the build prefix; `Makeconf`'s
@@ -372,7 +374,8 @@ with nothing pointing at the build.
 - Build checks, in `tests/test_build.py` against the wheel file: every
   `DT_NEEDED` resolves inside the wheel or to a library on the
   manylinux allowlist; `auditwheel show` reports `manylinux_2_28_x86_64`;
-  `lib/R/lib` holds exactly the five files above; no member is a
+  `lib/R/lib` holds exactly the five files above (six from stage 11);
+  no member is a
   symlink; `RECORD` hashes match the members; no member contains the
   build prefix string.
 - Front-ends, in `tests/test_installed.py`: `R.home()` is inside the
@@ -894,8 +897,49 @@ in stages 21 to 23.
 - Every **Tests.** line exists and was seen to fail.
 - Quick profile green.
 
-**Design.** [§6.5](design.md#65-zur-doctor), [§15 D11](design.md#15-decisions),
-[§16](design.md#16-open-questions) question 5.
+**Deviations.** 2026-11-24:
+- The check after `eval "$(zur doctor --command)"` runs in
+  `debian:13-slim`, not `debian:12-slim`: P3M's bookworm index has no
+  `data.table` (design §18.2), so the recipe would compile it there
+  (coordinator's decision on [#12](https://github.com/pedrobtz/py-zur/issues/12),
+  option A, as in stage 8). `debian:12-slim` runs the first test; the
+  `debian:13-slim` leg first checks that the image lacks both runtimes.
+- The RHEL survey did not confirm the list on RHEL 9 as it stood: 9 of
+  the 16 P3M `rhel9` binaries link `libflexiblas.so.3` (design §18.4).
+  Decided on #12 (option B): the wheel ships `libflexiblas.so.3` in
+  `lib/R/lib`, a shim with no symbols whose `DT_NEEDED` are
+  `libRlapack.so` and `libRblas.so` (design §6.2, §6.3, D16); `zur
+  doctor` never mentions flexiblas. This adds a build step, a build
+  check (six files in `lib/R/lib`; the shim's `DT_NEEDED`, no defined
+  symbols, under 20 KB) and a `rockylinux:9` leg: `zur doctor` on the
+  bare image, then after the `eval` `RcppArmadillo` from the §6.6
+  recipe gives `BINARY_SET`'s answer with no host flexiblas and maps
+  the shim from `R.home("lib")`, then the same after `dnf install
+  flexiblas`. Stage 5's "exactly" line is corrected; the D16 coverage
+  row now names stage 11.
+- All the doctor checks run in a job of their own,
+  `doctor-linux-x86_64`, one container per starting state
+  (`debian:12-slim`, `debian:13-slim`, `rockylinux:8`, `rockylinux:9`
+  bare; `ubuntu:24.04` with the runtimes and no compiler; `ubuntu:24.04`
+  with `build-essential` and `gfortran`). `ZUR_DOCTOR` tells the tests
+  the state; the package manager (`dpkg-query`, `rpm -q`) is the
+  oracle. The non-root case runs the installed `zur` as uid 65534 from
+  the root container.
+- The output format, the one-line `&&` command (with `apt-get update`
+  first), exit status 1 for a missing library and 2 for a usage error,
+  and `ZUR_OS_RELEASE` as the test-only override are recorded in design
+  §6.5.
+- Added tests beyond the stage's list: in every container of
+  `test-linux-x86_64` and the doctor job, the report agrees with the
+  package manager; the RHEL 9 shim checks above; the entry point and
+  the copied module in the wheel (`tests/test_build.py`); in
+  `tests/test_unit.py` the family tables, the os-release reading
+  (without running it), the command for each family as root and not,
+  the full report text in four cases, the exit codes, usage errors, and
+  that `R`/`Rscript` do not import the doctor.
+
+**Design.** [§6.5](design.md#65-zur-doctor), [§15 D11, D16](design.md#15-decisions),
+[§16](design.md#16-open-questions) question 5, [§18.4](design.md#184-measurements-2026-11-24-stage-11).
 
 ## Stage 12 — First-run warning
 
@@ -1457,7 +1501,7 @@ Each test of [§13](design.md#13-how-it-is-tested) and where it lands:
 | Network and data | 5, 6 |
 | Relocation | 5; 21 |
 | Build checks | 5, 9; 21, 23 |
-| Containers | 5, 6 |
+| Containers | 5, 6, 11 |
 
 Each decision of [§15](design.md#15-decisions) that needs work:
 
@@ -1478,7 +1522,7 @@ Each decision of [§15](design.md#15-decisions) that needs work:
 | D13 environment in R's files | 5, 6, 7 |
 | D14 cairo without pango | 3, 9 |
 | D15 source mirror | 14, 19 |
-| D16 reference BLAS under both names | 5, 8 |
+| D16 reference BLAS under both names | 5, 8, 11 |
 | D17 no OpenMP in R, static Fortran runtime | 3, 5, 8, 10 |
 | D18 macOS binaries unmodified | 21, 22 |
 | D19 translations dropped | 9, 21, 23 |

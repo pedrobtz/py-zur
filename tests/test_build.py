@@ -192,6 +192,8 @@ def test_auditwheel_show_reports_manylinux_2_28():
 
 
 def test_r_lib_holds_only_r_libraries_and_blas_names(members):
+    # R's three, two copies under the reference names and the FlexiBLAS
+    # shim (D16).
     lib = f"{RUNTIME}/lib/R/lib/"
     found = sorted(n[len(lib) :] for n in members if n.startswith(lib))
     assert found == [
@@ -199,6 +201,7 @@ def test_r_lib_holds_only_r_libraries_and_blas_names(members):
         "libRblas.so",
         "libRlapack.so",
         "libblas.so.3",
+        "libflexiblas.so.3",
         "liblapack.so.3",
     ]
 
@@ -213,6 +216,31 @@ def test_blas_names_are_copies_of_r_blas(tree, elfs):
         # Same code: patchelf changed only the dynamic section.
         assert text_section(tree / lib / name) == text_section(tree / lib / source)
         assert elfs[lib + name][0] == elfs[lib + source][0]
+
+
+def defined_symbols(path):
+    with path.open("rb") as f:
+        dynsym = ELFFile(f).get_section_by_name(".dynsym")
+        if dynsym is None:
+            return []
+        return [
+            s.name
+            for s in dynsym.iter_symbols()
+            if s.name and s["st_shndx"] != "SHN_UNDEF"
+        ]
+
+
+def test_flexiblas_name_is_a_shim_onto_r_blas(tree, members, elfs):
+    # Design §6.3, D16: P3M's RHEL 9 binaries link libflexiblas.so.3. The
+    # shim only loads R's LAPACK and BLAS, which define every symbol.
+    name = f"{RUNTIME}/lib/R/lib/libflexiblas.so.3"
+    needed, soname, runpath = elfs[name]
+    assert soname == "libflexiblas.so.3"
+    assert needed == ["libRlapack.so", "libRblas.so"]
+    assert runpath == ["$ORIGIN"]
+    assert defined_symbols(tree / name) == []
+    assert "dgemm_" in defined_symbols(tree / f"{RUNTIME}/lib/R/lib/libRblas.so")
+    assert members[name][0].file_size < 20_000
 
 
 def test_fortran_runtime_is_grafted_under_hashed_names(elfs):
