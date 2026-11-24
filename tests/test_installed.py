@@ -16,7 +16,9 @@ the checks that start containers themselves (a shared and a read-only
 home), from a machine with Docker and ZUR_WHEEL; they need no
 installed zur. ZUR_PAK=1 runs the pak recipe and the binary packages,
 which install into the user library from the network, in a container
-with no compiler.
+with no compiler. ZUR_COMPILERS=1 (the compiler matrix) requires gcc,
+g++, gfortran and make for the fixture packages and runs the MASS check
+on Ubuntu 24.04.
 """
 
 import os
@@ -24,7 +26,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import textwrap
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
@@ -33,6 +34,7 @@ import pytest
 from recipes import PAK_RECIPE, pak_install
 
 REPO = Path(__file__).resolve().parent.parent
+FIXTURES = REPO / "tests/fixtures"  # source packages with known answers
 
 # scripts/linux/build-r.sh and build-deps.sh install into these; the
 # second starts with the first, so one search finds both.
@@ -303,14 +305,10 @@ def test_user_library_survives_reinstall(r_home, tmp_path):
     # Whatever the default library is (test_user_library_is_zurs_own
     # checks which), a package there outlives the tool's directory.
     library = Path(rout(".libPaths()[1]"))
-    pkg = _package(
-        tmp_path,
-        "zurkeep",
-        {"NAMESPACE": "export(hi)\n", "R/hi.R": 'hi <- function() "kept"\n'},
-    )
+    pkg = shutil.copytree(FIXTURES / "zurpure", tmp_path / "zurpure")
     installed = run(["R", "CMD", "INSTALL", str(pkg)], timeout=600)  # no -l
     assert installed.returncode == 0, installed.stdout + installed.stderr
-    code = "cat(zurkeep::hi(), dirname(find.package('zurkeep')))"
+    code = "cat(zurpure::hi(), dirname(find.package('zurpure')))"
     wheel = os.environ["ZUR_WHEEL"]
     # A file the wheel installs, deleted, and one it does not, added: the
     # first shows a reinstall happened, the second whether the tool's
@@ -319,22 +317,22 @@ def test_user_library_survives_reinstall(r_home, tmp_path):
     stray = r_home / "zur-reinstall-marker"
     data = owned.read_bytes()
     try:
-        assert (library / "zurkeep/DESCRIPTION").is_file()
+        assert (library / "zurpure/DESCRIPTION").is_file()
         owned.unlink()
         stray.write_text("")
         tool("install", "--reinstall", wheel)
         assert owned.read_bytes() == data
-        assert rout(code).split(" ", 1) == ["kept", str(library)]
+        assert rout(code).split(" ", 1) == ["pure", str(library)]
         # uv's --reinstall rewrites the wheel's files and keeps any other
         # file in the tool's directory (2026-11-24); uninstalling removes
         # the directory, as a library inside it would be.
         tool("uninstall", "zur")
         tool("install", wheel)
         assert not stray.exists()
-        assert rout(code).split(" ", 1) == ["kept", str(library)]
+        assert rout(code).split(" ", 1) == ["pure", str(library)]
     finally:
         stray.unlink(missing_ok=True)
-        shutil.rmtree(library / "zurkeep", ignore_errors=True)
+        shutil.rmtree(library / "zurpure", ignore_errors=True)
 
 
 # Containers started from here (ZUR_DOCKER=1): R as
@@ -660,8 +658,8 @@ def test_blas_and_lapack_known_answer(r_home):
     ("var", "expected"), [("CC", "gcc"), ("CXX", "g++"), ("FC", "gfortran")]
 )
 def test_makeconf_names_the_machine_compilers(var, expected):
-    # D5. The compiler is the plain name; for C++ and Fortran, configure's
-    # standard flag (for example -std=gnu++17) may follow it.
+    # D5. The compiler is the plain name; for C++ the host's default
+    # standard follows it (design §6.3), for Fortran configure's flag may.
     result = run(["R", "CMD", "config", var])
     assert result.returncode == 0, result.stderr
     words = result.stdout.split()
@@ -837,65 +835,160 @@ def test_https_download(tmp_path):
     assert re.search(r"^Release: \d+\.\d+\.\d+$", dest.read_text(), flags=re.M)
 
 
-# Source packages -------------------------------------------------------------
+# Source packages (design §13, roadmap stage 10) -------------------------------
+#
+# The fixture packages in tests/fixtures, each with a known answer. They
+# compile with the host's own gcc, g++ and gfortran through Makeconf
+# (D5). ZUR_COMPILERS=1 (the compiler matrix of build.yml) makes a missing
+# compiler a failure; elsewhere the fixtures needing one skip.
+
+HOST_COMPILERS = os.environ.get("ZUR_COMPILERS") == "1"
 
 
-def _package(root, name, files):
-    pkg = root / name
-    (pkg / "R").mkdir(parents=True)
-    (pkg / "DESCRIPTION").write_text(
-        f"Package: {name}\nVersion: 0.1\nTitle: Test\nDescription: Test.\n"
-        "License: MIT\nAuthor: zur\nMaintainer: zur <zur@example.com>\n"
-    )
-    for rel, text in files.items():
-        path = pkg / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(textwrap.dedent(text))
-    return pkg
+def needs(*tools):
+    missing = [t for t in tools if shutil.which(t) is None]
+    if missing and HOST_COMPILERS:
+        pytest.fail(f"ZUR_COMPILERS=1 but {missing} not on PATH")
+    if missing:
+        pytest.skip(f"needs {missing}")
 
 
-def _install(pkg, lib):
+def gxx_version():
+    return run(["g++", "-dumpfullversion", "-dumpversion"]).stdout.strip()
+
+
+def gxx_accepts(std):
+    flag = f"-std={std}"
+    return run(["g++", flag, "-fsyntax-only", "-x", "c++", "/dev/null"]).returncode == 0
+
+
+def default_cxx():
+    """The default standard and ``__cplusplus`` this host's g++ should give.
+
+    From the gcc version, independently of Makeconf's probe: R's configure
+    takes C++20 where the compiler has it (gcc 10 onward), else C++17. gcc 10
+    reports C++20 as 201709; gcc 11 onward as 202002.
+    """
+    major = int(gxx_version().split(".")[0])
+    if major < 10:
+        return "gnu++17", 201703
+    return "gnu++20", 201709 if major == 10 else 202002
+
+
+def install_fixture(name, tmp_path):
+    """Install fixture ``name`` into a fresh library; the library and log."""
+    pkg = shutil.copytree(FIXTURES / name, tmp_path / name)  # builds in place
+    lib = tmp_path / "lib"
+    lib.mkdir()
     result = run(["R", "CMD", "INSTALL", "-l", str(lib), str(pkg)], timeout=600)
-    assert result.returncode == 0, result.stdout + result.stderr
+    log = result.stdout + result.stderr
+    assert result.returncode == 0, log
+    return lib, log
+
+
+def call(lib, code, env=None):
+    return rscript(f'.libPaths("{lib}"); cat({code})', env=env).stdout.strip()
 
 
 def test_install_pure_r_package(tmp_path):
-    lib = tmp_path / "lib"
-    lib.mkdir()
-    pkg = _package(
-        tmp_path,
-        "zurpure",
-        {"NAMESPACE": "export(hi)\n", "R/hi.R": 'hi <- function() "pure"\n'},
-    )
-    _install(pkg, lib)
-    out = rscript(f'.libPaths("{lib}"); cat(zurpure::hi())').stdout
-    assert out.strip() == "pure"
+    lib, _ = install_fixture("zurpure", tmp_path)
+    assert call(lib, "zurpure::hi()") == "pure"
+
+
+def test_source_package_c(tmp_path):
+    needs("gcc", "make")
+    lib, log = install_fixture("zurc", tmp_path)
+    assert re.search(r"^gcc (?!-std)", log, flags=re.M), log  # CC is plain gcc
+    assert call(lib, "zurc::add(2, 40)") == "42"
+
+
+def test_r_cmd_config_cxx_is_the_hosts_default():
+    needs("g++", "make")
+    std, _ = default_cxx()
+    result = run(["R", "CMD", "config", "CXX"])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"g++ -std={std}"
+
+
+def test_r_cmd_shlib_uses_the_hosts_default(tmp_path):
+    needs("g++", "make")
+    std, _ = default_cxx()
+    shutil.copy(FIXTURES / "zurcxx/src/cxx.cpp", tmp_path)
+    result = run(["R", "CMD", "SHLIB", "cxx.cpp"], cwd=tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert re.search(rf"^g\+\+ -std={re.escape(std)} ", result.stdout, flags=re.M)
+    assert (tmp_path / "cxx.so").exists()
+
+
+def test_source_package_cxx_default_standard(tmp_path):
+    # Never skipped where g++ is installed (roadmap stage 10).
+    needs("g++", "make")
+    std, cplusplus = default_cxx()
+    lib, log = install_fixture("zurcxx", tmp_path)
+    assert re.search(rf"^g\+\+ -std={re.escape(std)} ", log, flags=re.M), log
+    assert call(lib, "zurcxx::cplusplus()") == str(cplusplus)
+    assert call(lib, "zurcxx::total(10)") == "55"
+
+
+def test_source_package_cxx20(tmp_path):
+    needs("g++", "make")
+    if not gxx_accepts("gnu++20"):
+        pytest.skip(f"g++ {gxx_version()} rejects -std=gnu++20")
+    lib, log = install_fixture("zurcxx20", tmp_path)
+    assert "-std=gnu++20 " in log, log
+    assert call(lib, "zurcxx20::cplusplus()") == str(default_cxx()[1])
+    assert call(lib, "zurcxx20::total(10)") == "55"
+
+
+def test_source_package_cxx_newest_standard(r_home, tmp_path):
+    needs("g++", "make")
+    makeconf = (r_home / "etc/Makeconf").read_text()
+    offered = re.findall(r"^CXX(\d+)STD = -std=gnu\+\+(\d+)$", makeconf, flags=re.M)
+    assert all(a == b for a, b in offered), offered
+    # The fixture's CXX_STD is the newest standard Makeconf offers.
+    assert max(int(a) for a, _ in offered) == 26
+    if not gxx_accepts("gnu++26"):
+        pytest.skip(f"g++ {gxx_version()} rejects -std=gnu++26")
+    lib, log = install_fixture("zurcxx26", tmp_path)
+    assert "-std=gnu++26 " in log, log
+    assert int(call(lib, "zurcxx26::cplusplus()")) > 202302  # C++23's value
+    assert call(lib, "zurcxx26::total(10)") == "55"
+
+
+def test_source_package_fortran(tmp_path):
+    needs("gfortran", "make")
+    lib, log = install_fixture("zurf", tmp_path)
+    assert re.search(r"^gfortran ", log, flags=re.M), log
+    assert call(lib, "zurf::sumsq(10)") == "385"
+
+
+def test_source_package_openmp(tmp_path):
+    needs("gcc", "make")
+    lib, log = install_fixture("zuromp", tmp_path)
+    assert re.search(r"^gcc .*-fopenmp", log, flags=re.M), log
+    env = dict(os.environ, OMP_NUM_THREADS="3")
+    assert call(lib, "zuromp::threads()", env=env) == "3"
+    assert call(lib, "zuromp::total(1000)", env=env) == "500500"
 
 
 @pytest.mark.skipif(
-    shutil.which("gcc") is None or shutil.which("make") is None,
-    reason="source packages need the system gcc and make",
+    not HOST_COMPILERS or CONTAINER != "ubuntu:24.04",
+    reason="needs ZUR_COMPILERS=1 on Ubuntu 24.04: network and a compiler",
 )
-def test_install_c_package_with_system_compiler(tmp_path):
+def test_recommended_package_from_cran_source(tmp_path):
+    # D1: recommended packages are one install.packages() away.
     lib = tmp_path / "lib"
     lib.mkdir()
-    pkg = _package(
-        tmp_path,
-        "zurc",
-        {
-            "NAMESPACE": "useDynLib(zurc)\nexport(add)\n",
-            "R/add.R": 'add <- function(a, b) .Call("add_", a, b)\n',
-            "src/add.c": """\
-                #include <Rinternals.h>
-                SEXP add_(SEXP a, SEXP b) {
-                  return Rf_ScalarReal(Rf_asReal(a) + Rf_asReal(b));
-                }
-            """,
-        },
+    code = (
+        f'install.packages("MASS", lib = "{lib}", type = "source",'
+        ' repos = "https://cloud.r-project.org");'
+        f'library(MASS, lib.loc = "{lib}"); print(fractions(0.5))'
     )
-    _install(pkg, lib)
-    out = rscript(f'.libPaths("{lib}"); cat(zurc::add(2, 40))').stdout
-    assert out.strip() == "42"
+    result = run(["Rscript", "--vanilla", "-e", code], timeout=900)
+    log = result.stdout + result.stderr
+    assert result.returncode == 0, log
+    assert "gcc " in log, log  # compiled here, from source
+    assert result.stdout.splitlines()[-1] == "[1] 1/2", log
 
 
 # Relocation ------------------------------------------------------------------

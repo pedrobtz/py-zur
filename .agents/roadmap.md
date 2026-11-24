@@ -26,7 +26,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | [#32](https://github.com/pedrobtz/py-zur/pull/32) | 2026-11-24 |
 | 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | [#33](https://github.com/pedrobtz/py-zur/pull/33) | 2026-11-24 |
 | 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | [#10](https://github.com/pedrobtz/py-zur/issues/10) | [#35](https://github.com/pedrobtz/py-zur/pull/35) | 2026-11-24 |
-| 10 | [Source packages across host compilers](#stage-10--source-packages-across-host-compilers) | full | [#11](https://github.com/pedrobtz/py-zur/issues/11) | | |
+| 10 | [Source packages across host compilers](#stage-10--source-packages-across-host-compilers) | full | [#11](https://github.com/pedrobtz/py-zur/issues/11) | [#36](https://github.com/pedrobtz/py-zur/pull/36) | 2026-11-24 |
 | 11 | [zur doctor](#stage-11--zur-doctor) | quick | [#12](https://github.com/pedrobtz/py-zur/issues/12) | | |
 | 12 | [First-run warning](#stage-12--first-run-warning) | quick | [#13](https://github.com/pedrobtz/py-zur/issues/13) | | |
 | 13 | [Licences and build info](#stage-13--licences-and-build-info) | quick | [#14](https://github.com/pedrobtz/py-zur/issues/14) | | |
@@ -804,6 +804,11 @@ the oldest supported host compiler to the newest, even though
   gcc 8 accepts. If R's default C++ standard is one gcc 8 rejects, the
   stage stops and the minimum supported host compiler goes back to the
   maintainer as a design decision; it is not skipped.
+  Met 2026-11-24: R's default (`gnu++20`) is one gcc 8 rejects; the
+  stage stopped, and the decision on
+  [#11](https://github.com/pedrobtz/py-zur/issues/11) keeps gcc 8 as
+  the minimum and chooses the default standard per host in `Makeconf`
+  (design §6.3, D5, §18.3).
 - Full profile green.
 
 **Design.** [§6.3](design.md#63-repair-and-relocation), [§13](design.md#13-how-it-is-tested)
@@ -815,6 +820,31 @@ the oldest supported host compiler to the newest, even though
 > reading used here: the newest-standard fixture runs on every host
 > whose gcc accepts that standard and is skipped, with the gcc version
 > in the reason, on the others; the default standard is never skipped.
+
+**Deviations.** 2026-11-24:
+- `CXX` is `g++ -std=$(ZUR_CXXSTD)`, with `ZUR_CXXSTD` probed by make
+  from the host's `g++` (decision on #11, design §6.3); stage 5's
+  reading that `CXX` keeps configure's flag no longer holds.
+- Added tests beyond the stage's list: `R CMD config CXX` and `R CMD
+  SHLIB` print the host's default (`gnu++17` on gcc 8, `gnu++20` from
+  gcc 10), a `CXX_STD = CXX20` fixture (skipped only on gcc 8), the
+  build check on the `ZUR_CXXSTD` line, and unit tests of the probe
+  with a stand-in `g++`.
+- The expected `__cplusplus` comes from the host's gcc version: 201703
+  below gcc 10, 202002 from gcc 11. gcc 10 reports C++20 as 201709;
+  the tests expect that, though no leg has gcc 10 (design §13 says
+  202002 "on gcc 10 onward").
+- The newest-standard fixture (`CXX_STD = CXX26`) runs only on Fedora
+  45 (gcc 16); gcc 8 and gcc 13 reject `-std=gnu++26`. The test also
+  checks that 26 is the newest standard `Makeconf` offers.
+- The OpenMP fixture runs with `OMP_NUM_THREADS=3` and expects 3
+  threads, so its answer does not depend on the runner's cores.
+- The compiler matrix is the full-only job `compilers-linux-x86_64`
+  (`ZUR_COMPILERS=1`), which replaces the `full` placeholder. The
+  quick containers run the C, OpenMP and pure-R fixtures where `gcc`
+  is installed and skip the C++ and Fortran ones.
+- The newest Fedora release is 45 (Docker Hub `fedora:latest` on
+  2026-11-24; `46` is rawhide).
 
 ## Stage 11 — zur doctor
 

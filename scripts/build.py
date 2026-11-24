@@ -232,6 +232,14 @@ def relocate_front_end(path, prefix, home_from_script, r_version):
     path.write_text(text)
 
 
+# The line of Makeconf that picks the host's default C++ standard (design
+# §6.3). Make runs it once per invocation that reads Makeconf.
+CXXSTD_PROBE = (
+    "ZUR_CXXSTD := $(shell g++ -std=gnu++20 -fsyntax-only -x c++ /dev/null"
+    " 2>/dev/null && echo gnu++20 || echo gnu++17)"
+)
+
+
 def relocate_makeconf(path, prefix, deps):
     text = path.read_text()
     text = re.sub(r"^R_HOME=.*\n", "", text, count=1, flags=re.M)  # R exports it
@@ -259,6 +267,18 @@ def relocate_makeconf(path, prefix, deps):
     # has gcc 8, Ubuntu 24.04 gcc 13). Packages compile in the host's
     # default C standard; Rconfig.h decides per compiler (relocate_rconfig).
     text = re.sub(r"^(CC = gcc) -std=\S+$", r"\1", text, flags=re.M)
+    # CXX: the default C++ standard is chosen per host when make reads
+    # Makeconf, as R's configure would on that machine: gnu++20 where the
+    # host's g++ accepts it (gcc 10 onward), otherwise gnu++17 (gcc 8).
+    # CXX17STD to CXX26STD stay as configure set them (design §6.3).
+    text, n = re.subn(
+        r"^CXX = g\+\+ -std=\S+$",
+        lambda _: f"{CXXSTD_PROBE}\nCXX = g++ -std=$(ZUR_CXXSTD)",
+        text,
+        flags=re.M,
+    )
+    if n != 1:
+        raise SystemExit(f"{path}: {n} CXX lines with a -std flag")
     # D17: R is built without OpenMP; packages use the host's. (Fortran
     # has one variable, FFLAGS, for fixed and free form.)
     for lang in ["C", "CXX", "F"]:

@@ -335,13 +335,54 @@ jobs:
           ZUR_PAK=1 uv run pytest -v tests/test_installed.py -k "$k"
 
   # Full profile. Every job here has `needs: profile` and
-  # `if: needs.profile.outputs.full == 'true'`. The host compiler matrix
-  # (stage 10) and the other platforms' legs (stages 20 to 23) join here;
-  # until then this placeholder shows the gate opening.
+  # `if: needs.profile.outputs.full == 'true'`. The other platforms' legs
+  # (stages 20 to 23) join here.
 
-  full:
-    needs: profile
+  # Source packages across host compilers (roadmap stage 10, design §13):
+  # the fixture packages of tests/fixtures with each host's own gcc, g++,
+  # gfortran and make, from the oldest supported (gcc 8, Rocky Linux 8)
+  # to the newest in a current distribution (the newest Fedora release,
+  # pinned by tag). ZUR_COMPILERS=1 makes a missing compiler a failure
+  # and runs the MASS check (network) on Ubuntu 24.04. To add a leg: an
+  # image in the matrix, and its package manager's compiler packages in
+  # the first step.
+  compilers-linux-x86_64:
+    needs: [profile, build-linux-x86_64]
     if: needs.profile.outputs.full == 'true' && !inputs.pango
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["rockylinux:8", "ubuntu:24.04", "fedora:45"]
+    container: ${{ matrix.image }}
+    env:
+      ZUR_CONTAINER: ${{ matrix.image }}
+      ZUR_COMPILERS: "1"
     steps:
-      - run: echo "Full profile; no extra legs yet (roadmap stage 2)."
+      - name: Host compilers
+        run: |
+          if command -v apt-get >/dev/null; then
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              ca-certificates gcc g++ gfortran libc6-dev make
+          else
+            dnf install -y gcc gcc-c++ gcc-gfortran make tar gzip
+          fi
+          echo "$ZUR_CONTAINER: $(g++ --version | head -n 1)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
+      - name: Install zur as a uv tool
+        run: |
+          uv tool install dist/zur-*.whl
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+      - name: Source packages
+        run: |
+          R CMD config CXX
+          k="source_package or r_cmd_config_cxx or r_cmd_shlib"
+          k="$k or makeconf or recommended_package"
+          uv run pytest -v -rs tests/test_installed.py -k "$k"

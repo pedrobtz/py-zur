@@ -1,0 +1,2 @@
+export(sumsq)
+useDynLib(zurf)
