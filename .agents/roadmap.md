@@ -20,7 +20,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 1 | [linux-64 wheel](#stage-1--linux-64-wheel) | quick | — | [#1](https://github.com/pedrobtz/py-zur/pull/1) | 2026-11-23 |
 | 2 | [Project identity and CI profiles](#stage-2--project-identity-and-ci-profiles) | quick | [#3](https://github.com/pedrobtz/py-zur/issues/3) | [#27](https://github.com/pedrobtz/py-zur/pull/27) | 2026-11-24 |
 | 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | [#4](https://github.com/pedrobtz/py-zur/issues/4) | [#28](https://github.com/pedrobtz/py-zur/pull/28) | 2026-11-24 |
-| 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | [#5](https://github.com/pedrobtz/py-zur/issues/5) | | |
+| 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | [#5](https://github.com/pedrobtz/py-zur/issues/5) | [#29](https://github.com/pedrobtz/py-zur/pull/29) | 2026-11-24 |
 | 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | | |
 | 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | | |
 | 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | | |
@@ -66,7 +66,9 @@ R package profiles are replaced by two of its own, both in
   after #1, which built nothing from source.) R alone, from source in
   the `r-source` job: 147 to 189 s (two runs) for `configure`, `make -j4` and
   `make install` on `ubuntu-latest`'s 4 cores, plus about 40 s of
-  `dnf install` (stage 3, 2026-11-24).
+  `dnf install` (stage 3, 2026-11-24). Built dependencies (OpenSSL and
+  libcurl, stage 4, 2026-11-24): cold 124 to 219 s over five runs of
+  `build-deps.sh`; warm, a cache restore of 8 MB in about 1 s.
 - **full** (`full-ci` label, weekly schedule, dispatch, and every run of
   the release workflow): quick, plus the host compiler matrix of stage
   10, plus every other platform leg that exists by then: Linux aarch64
@@ -293,6 +295,24 @@ the same container.
 - The cold and warm dependency build times are recorded in the CI
   profiles section.
 - Quick profile green.
+
+**Deviations.** 2026-11-24:
+- The cache key also hashes `scripts/linux/build-deps.sh`, which holds
+  the build recipes: a changed recipe must rebuild as a changed pin does.
+- `scripts/linux/devel-packages.txt` is gone: the `-devel` packages are
+  the manifest's `image` entries, and the unpinned build tools (`perl`
+  for OpenSSL's `Configure`, `xz`) are in `scripts/linux/build-tools.txt`.
+- Pinned: every library R's own files link, checked by
+  `tests/test_prefix.py` against the scan of the prefix. Not pinned: the
+  `-devel` packages `dnf` pulls in for those (for example cairo's
+  pixman and X11 headers) and the runtime libraries they bring. Stage
+  5's repair bundles whichever are outside the manylinux allowlist;
+  stage 13's check that every bundled ELF file belongs to a
+  `BUILD-INFO.json` entry is where they get entries.
+- Added tests beyond the stage's list: the manifest names every library
+  R links; no `/usr/local` path in `Makeconf` or `ldpaths`; the
+  `rpm-check` refusal; cairo, libpng and libtiff versions through
+  `grSoftVersion()`.
 
 **Design.** [§6.1](design.md#61-build-environment), [§11](design.md#11-versioning-and-r-versions)
 (pinned inputs), goal 6 in [§2](design.md#2-goals-non-goals-anti-goals).

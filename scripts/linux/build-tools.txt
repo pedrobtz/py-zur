@@ -1,0 +1,10 @@
+# AlmaLinux 8 packages the build needs but nothing links (roadmap stage
+# 4), installed by `build-r.sh deps` together with the "image" entries of
+# manifests/linux.toml, which are pinned there. They come at the image's
+# repository versions: the image digest pins the toolchain, and these are
+# only run during the build.
+#
+# perl: OpenSSL's Configure (IPC::Cmd and other core modules).
+# xz: unpacks curl's .tar.xz.
+perl
+xz

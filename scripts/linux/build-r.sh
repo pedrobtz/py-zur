@@ -3,25 +3,38 @@
 # (design §6.1, §6.2). Run in the image named by scripts/linux/image,
 # from the repository root:
 #
-#   scripts/linux/build-r.sh deps     # dnf install devel-packages.txt
-#   scripts/linux/build-r.sh source   # fetch the tarball, check SHA-256
+#   uv run --frozen scripts/linux/build-r.sh deps     # pinned dnf packages
+#   uv run --frozen scripts/linux/build-r.sh source   # fetch, check SHA-256
 #   scripts/linux/build-r.sh build    # configure, make, make install
 #
-# or `all` for the three in order. R is installed into $ZUR_PREFIX
-# (default /opt/zur); the build tree is $ZUR_WORK (default /tmp/zur-build).
+# or `all` for the three in order; `deps` and `source` need Python
+# (scripts/deps.py). Between `deps` and `build`, build-deps.sh builds the
+# manifest's "source" entries into $ZUR_DEPS (default /opt/zur-deps),
+# which R is configured against. R is installed into $ZUR_PREFIX
+# (default /opt/zur); the build tree is $ZUR_WORK (default
+# /tmp/zur-build). ZUR_R_SOURCE names another r-source file and
+# ZUR_PYTHON another interpreter (tests).
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=r-source
-. "$here/r-source"
+. "${ZUR_R_SOURCE:-$here/r-source}"
+py=${ZUR_PYTHON:-python3}
+deps_py="$here/../deps.py"
 prefix=${ZUR_PREFIX:-/opt/zur}
+deps=${ZUR_DEPS:-/opt/zur-deps}
 work=${ZUR_WORK:-/tmp/zur-build}
 tarball="$work/R-$R_VERSION.tar.gz"
 src="$work/R-$R_VERSION"
 
+# The manifest's "image" entries at their pinned versions, and the build
+# tools (build-tools.txt). rpm-check then refuses any other version.
 deps() {
-  mapfile -t pkgs < <(grep -v '^\s*\(#\|$\)' "$here/devel-packages.txt")
-  dnf install -y "${pkgs[@]}"
+  pinned=$("$py" "$deps_py" dnf)
+  mapfile -t tools < <(grep -v '^\s*\(#\|$\)' "$here/build-tools.txt")
+  # shellcheck disable=SC2086 # one package spec per word
+  dnf install -y "${tools[@]}" $pinned
+  "$py" "$deps_py" rpm-check
   # D14: configure uses pango whenever it finds it.
   if rpm -q pango-devel >/dev/null; then
     echo "pango-devel is installed; R must be built without pango (D14)" >&2
@@ -30,10 +43,9 @@ deps() {
 }
 
 source_() {
-  mkdir -p "$work"
-  curl -fsSL --retry 3 -o "$tarball" "$R_URL"
-  # Checked before anything is unpacked or run.
-  echo "$R_SHA256  $tarball" | sha256sum -c -
+  # Checked before anything is unpacked or run, by the same code as the
+  # manifest's sources (scripts/deps.py fetch).
+  "$py" "$deps_py" fetch "$R_URL" "$R_SHA256" "$tarball"
   rm -rf "$src"
   tar -xzf "$tarball" -C "$work"
 }
@@ -51,7 +63,16 @@ build() {
   echo "gfortran: $(gfortran --version | head -1)"
   start=$SECONDS
   # LIBnn=lib: R_HOME is $prefix/lib/R, as §6.3 names it, not lib64.
-  LIBnn=lib ./configure --prefix="$prefix" \
+  # CPPFLAGS and LDFLAGS replace configure's default -I/usr/local/include
+  # and -L/usr/local/lib: the image keeps its own builds there, which are
+  # no pinned input (stage 4). The -L directory also becomes part of
+  # R_LD_LIBRARY_PATH in etc/ldpaths, so R finds the libcurl built there;
+  # curl-config on PATH is that libcurl's. PKG_CONFIG_PATH replaces the
+  # image's /usr/local/lib/pkgconfig for the same reason; pkg-config still
+  # searches the system's own directories.
+  PATH="$deps/bin:$PATH" PKG_CONFIG_PATH="$deps/lib/pkgconfig" \
+    CPPFLAGS="-I$deps/include" LDFLAGS="-L$deps/lib" \
+    LIBnn=lib ./configure --prefix="$prefix" \
     --enable-R-shlib --enable-memory-profiling \
     --without-x --without-tcltk --without-aqua \
     --without-recommended-packages \
@@ -69,6 +90,6 @@ case "${1:-all}" in
   deps) deps ;;
   source) source_ ;;
   build) build ;;
-  all) deps; source_; build ;;
+  all) deps; source_; "$here/build-deps.sh"; build ;;
   *) echo "usage: $0 [deps|source|build|all]" >&2; exit 2 ;;
 esac

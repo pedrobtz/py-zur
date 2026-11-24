@@ -13,6 +13,7 @@ dependencies = [
     "py-rattler>=0.29",
     "pyelftools>=0.31",
     "patchelf>=0.17; sys_platform == 'linux'",
+    "tomli>=2; python_version < '3.11'",
 ]
 
 [dependency-groups]

@@ -12,11 +12,17 @@ answer.
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -26,11 +32,16 @@ if "ZUR_PREFIX" not in os.environ:
 PREFIX = Path(os.environ["ZUR_PREFIX"])
 R_LIB = PREFIX / "lib/R/lib"
 
-R_VERSION = dict(
+R_SOURCE = dict(
     line.split("=", 1)
     for line in (REPO / "scripts/linux/r-source").read_text().splitlines()
     if line and not line.startswith("#")
-)["R_VERSION"]
+)
+R_VERSION = R_SOURCE["R_VERSION"]
+
+with (REPO / "manifests/linux.toml").open("rb") as f:
+    MANIFEST = tomllib.load(f)["dependency"]
+PINNED = {e["name"]: e["version"] for e in MANIFEST}
 
 # D17's static Fortran runtime cannot be linked in the image (§18,
 # 2026-11-24), so R's own libraries need the shared one; stage 5 grafts
@@ -59,7 +70,9 @@ def rscript(code):
 
 def r_named(expr):
     # A named vector, printed by R as one name=value line per element.
-    out = rscript(f"x <- {expr}; cat(paste0(names(x), '=', x), sep = '\\n')")
+    out = rscript(
+        f"x <- {expr}; cat(paste0(names(x), '=', gsub('\\n', ' ', x)), sep = '\\n')"
+    )
     return dict(line.split("=", 1) for line in out.splitlines())
 
 
@@ -133,3 +146,102 @@ def test_no_openmp_runtime():
 def test_fortran_runtime_only_in_r_own_libraries():
     found = scan()
     assert {p for p, n in found.items() if FORTRAN_RUNTIME & set(n)} == FORTRAN_USERS
+
+
+# Pinned dependencies (roadmap stage 4) ---------------------------------------
+
+
+def first_version(text):
+    """The first dotted number in a version banner ("LIBTIFF, Version 4.0.9")."""
+    return re.search(r"\d+(?:\.\d+)+", text).group()
+
+
+def test_libcurl_and_openssl_versions_reach_r():
+    out = rscript("v <- libcurlVersion(); cat(v, attr(v, 'ssl_version'), sep = '\\n')")
+    curl, ssl = out.splitlines()
+    assert curl == PINNED["curl"]
+    assert ssl == f"OpenSSL/{PINNED['openssl']}"
+
+
+@pytest.mark.parametrize(
+    ("component", "name"),
+    [
+        ("zlib", "zlib"),
+        ("bzlib", "bzip2"),
+        ("xz", "xz"),
+        ("PCRE", "pcre2"),
+        ("ICU", "icu"),
+        ("readline", "readline"),
+    ],
+)
+def test_ext_soft_versions_reach_r(component, name):
+    assert first_version(r_named("extSoftVersion()")[component]) == PINNED[name]
+
+
+@pytest.mark.parametrize(
+    ("component", "name"),
+    # Only cairo: R reaches libpng, libjpeg and libtiff through its cairo
+    # module alone, so grSoftVersion() reports no version for them.
+    [("cairo", "cairo")],
+)
+def test_graphics_versions_reach_r(component, name):
+    assert first_version(r_named("grSoftVersion()")[component]) == PINNED[name]
+
+
+def test_build_info_lists_the_manifest_and_r():
+    info = json.loads((PREFIX / "BUILD-INFO.json").read_text())["inputs"]
+    assert info["r"] == {
+        "version": R_SOURCE["R_VERSION"],
+        "url": R_SOURCE["R_URL"],
+        "sha256": R_SOURCE["R_SHA256"],
+    }
+    image = (REPO / "scripts/linux/image").read_text().splitlines()[-1]
+    assert info["image"] == image
+    assert info["dependencies"] == MANIFEST
+
+
+# Libraries no manifest entry needs to name: R's own, the Fortran runtime
+# (stage 5 grafts it) and glibc and the compiler's C and C++ runtimes,
+# which the manylinux_2_28 policy lets a wheel take from the system.
+NOT_PINNED = (
+    {"libR.so", "libRblas.so", "libRlapack.so"}
+    | FORTRAN_RUNTIME
+    | {
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libpthread.so.0",
+        "libresolv.so.2",
+        "librt.so.1",
+        "libstdc++.so.6",
+        "libutil.so.1",
+    }
+)
+
+
+def test_manifest_names_every_library_r_links():
+    linked = {n for needed in scan().values() for n in needed}
+    pinned = {s for e in MANIFEST for s in e["sonames"]}
+    assert linked - NOT_PINNED - pinned == set()
+    # The libraries stage 3 saw R link (design §18.1) are among them.
+    assert {
+        "libcurl.so.4",
+        "libicuuc.so.60",
+        "libpcre2-8.so.0",
+        "libcairo.so.2",
+    } <= linked
+
+
+def test_no_usr_local_paths():
+    # configure defaults to -I/usr/local/include and -L/usr/local/lib, and
+    # the image sets PKG_CONFIG_PATH=/usr/local/lib/pkgconfig: the image
+    # keeps builds there that are no pinned input.
+    for name in ["etc/Makeconf", "etc/ldpaths"]:
+        lines = (PREFIX / "lib/R" / name).read_text().splitlines()
+        # "##" lines are comments of R's own templates; one names
+        # /usr/local/lib as an example. configure's record of its call
+        # ("# configure ...") is kept, as it shows the environment.
+        found = [s for s in lines if "/usr/local" in s and not s.startswith("##")]
+        assert found == [], name
