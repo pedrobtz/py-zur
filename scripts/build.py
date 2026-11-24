@@ -163,7 +163,7 @@ def relocate_front_end(path, prefix, home_from_script):
     text, n = re.subn(
         rf"^R_HOME_DIR=\"?{re.escape(home)}\"?$",
         'R_HOME_DIR="${R_HOME:-$(CDPATH= cd -- "$(dirname -- "$0")/'
-        f'{home_from_script}" && pwd -P)}"',
+        f'{home_from_script}" && pwd -P)}}"',
         text,
         count=1,
         flags=re.M,
@@ -498,7 +498,9 @@ def pack(stage, out, version, tag):
         zf.writestr(link, "lib")
         lines.append("zur/_runtime/link,sha256=x,3")
         zf.writestr("zur/_runtime/zur-break.txt", "/opt/zur\n")
-        lines[0] = lines[0].rsplit(",", 2)[0] + ",sha256=AAAA," + lines[0].rsplit(",", 1)[1]
+        lines[0] = (
+            lines[0].rsplit(",", 2)[0] + ",sha256=AAAA," + lines[0].rsplit(",", 1)[1]
+        )
         lines.append(f"{record_name},,")
         entry = zipfile.ZipInfo(record_name, date_time=(1980, 1, 1, 0, 0, 0))
         entry.compress_type = zipfile.ZIP_DEFLATED
