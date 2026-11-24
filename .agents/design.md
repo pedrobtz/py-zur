@@ -278,13 +278,16 @@ binaries (§18):
   After the build, `Makeconf`'s `SHLIB_OPENMP_*FLAGS` are set back to
   `-fopenmp`, so packages such as `data.table` still use the host's
   OpenMP.
-- **Fortran runtime (D17):** R's libraries link `libgfortran` and
-  `libquadmath` statically (`-static-libgfortran`). The toolset ships
-  static archives; `libgfortran.a` has a few non-relocatable objects
-  (§18), so whether R's link pulls one in is settled by the first
-  build. If it does, the fallback is the toolset's shared runtime
-  grafted under a hashed name, as `auditwheel` does, used only by R's
-  own libraries.
+- **Fortran runtime (D17):** R's libraries link the shared
+  `libgfortran.so.5` and `libquadmath.so.0`, grafted under hashed names
+  and used only by R's own libraries (§6.3, stage 5). The static link
+  (`-static-libgfortran`, or naming `libgfortran.a` and `libquadmath.a`
+  in `FLIBS`) was the first choice and fails in the image: R links its
+  libraries with the C driver, and `libgfortran.a(async.o)` carries a
+  local-exec TLS relocation that cannot go into `libRlapack.so` (§18).
+  2026-11-24, stage 3: the first build answered §16 question 1 "no".
+  The graft is the system's gcc 8.5 `libgfortran.so.5`, since the
+  toolset ships no runtime of its own (§18).
 
 ### 6.3 Repair and relocation
 
@@ -712,8 +715,10 @@ every wheel next to R, so they carry R's licence.
 - **D15. zur mirrors corresponding source** per version (§14).
 - **D16. Reference BLAS and LAPACK on Linux**, also under
   `libblas.so.3` and `liblapack.so.3` (§6.2, §6.3).
-- **D17. R's own code without OpenMP; Fortran runtime static** on
-  Linux, with a hashed graft as the fallback (§6.2).
+- **D17. R's own code without OpenMP; Fortran runtime grafted** on
+  Linux under a hashed name, used only by R's own libraries (§6.2).
+  2026-11-24: the static runtime was the first choice and does not
+  link in the manylinux image (§18).
 - **D18. macOS binaries unmodified.** `DYLD_LIBRARY_PATH` and
   `DYLD_FALLBACK_LIBRARY_PATH` in `bin/R` replace `install_name_tool`,
   re-signing and any package patcher (§7). From the experiment of
@@ -735,7 +740,8 @@ not a decision.
    first step of its platform's build, and each names what changes if
    the answer is no:
    - Linux: R's link with `-static-libgfortran` succeeds in the
-     manylinux image. If not, the hashed graft of §6.2.
+     manylinux image. If not, the hashed graft of §6.2. Answered
+     2026-11-24 (stage 3): no; the graft is taken (§18).
    - `pak` selects P3M binaries on a zur-built R (§6.6). If not, D9 is
      reopened.
    - macOS: §7 holds on arm64 and on a runner that never had a
@@ -856,3 +862,32 @@ lists preliminary support for 6.1.0. Not run.
 **GitHub runner images** (readme files, `actions/runner-images`):
 Windows 2022 and 2025 list R 4.6.2 and no Rtools; macOS 15 lists
 gfortran 13 to 15 from Homebrew and no XQuartz.
+
+### 18.1 Measurements, 2026-11-24 (stage 3)
+
+Run in GitHub Actions (`ubuntu-latest`, 4 cores) in
+`quay.io/pypa/manylinux_2_28_x86_64:2026.11.21-1` (digest in
+`scripts/linux/image`), gfortran 14.2.1 (gcc-toolset-14), building R
+4.6.2 with the options of §6.2.
+
+**Static Fortran runtime: does not link.** `FLIBS` with
+`-l:libgfortran.a -l:libquadmath.a` (the C driver that links R's
+libraries ignores `-static-libgfortran`) links `libRblas.so` and
+`libR.so`, then fails at `libRlapack.so`:
+`libgfortran.a(async.o): relocation R_X86_64_TPOFF32 against symbol
+'thread_unit' can not be used when making a shared object`. The
+blocker is a local-exec TLS relocation, not one of the 13 absolute
+relocations counted above. Failing run:
+https://github.com/pedrobtz/py-zur/actions/runs/45291538897.
+
+**Fallback build.** With the shared runtime, `configure`, `make -j4`
+and `make install` take 189 s (CI profiles in the roadmap). Of the 18
+ELF files installed, exactly five need `libgfortran.so.5` and
+`libquadmath.so.0`: `libR.so`, `libRblas.so`, `libRlapack.so`,
+`modules/lapack.so` and `library/stats/libs/stats.so`; none needs
+`libgomp.so.1`. The image's libraries R links, for stage 4: ICU 60
+(`libicuuc.so.60`), readline 7, PCRE2, liblzma, libbz2, zlib, libcurl
+(`internet.so`), and cairo, freetype, libpng16, libjpeg 62 and libtiff 5
+(`cairo.so`). Run:
+https://github.com/pedrobtz/py-zur/actions/runs/45292200006.
+
