@@ -29,8 +29,9 @@ uv tool run --from zur Rscript file.R
 Two settings, in order of priority:
 
 1. **CI/CD pipelines.** A job installs `zur` and runs `Rscript file.R`.
-   Packages come from `pak`, which is the documented route (§6.6): it
-   picks binary packages and installs their system requirements.
+   Packages come from `pak`, which is the documented route (§6.6): with
+   P3M added, it picks binary packages and installs their system
+   requirements.
    `install.packages()` works as on any R, which under `Rscript` means
    the script must name a repository itself.
 2. **Remote editor sessions** (code-server, VS Code remote): someone
@@ -562,15 +563,20 @@ uv tool install 'zur==4.6.2.*'
 Rscript -e 'install.packages("pak", repos = sprintf(
   "https://r-lib.github.io/p/pak/stable/%s/%s/%s",
   .Platform$pkgType, R.version$os, R.version$arch))'
-Rscript -e 'pak::pkg_install("data.table")'
+Rscript -e 'pak::repo_add(CRAN = "PPM@latest"); pak::pkg_install("data.table")'
 ```
 
-`pak` is expected to select P3M binaries for the running distribution
-without any `repos` or user-agent setting, and to install
-package-declared system requirements when it can. Both are to be
-confirmed on a zur-built R (§13). If `pak` does not pick binaries
-there, D9 is reopened, because goal 1 cannot be met by compiling from
-source.
+`pak` alone resolves `@CRAN@` to a source-only mirror (§18.2).
+`repo_add()` points it at P3M, where it picks the binaries for the
+running distribution and installs package-declared system requirements
+when it can. The setting lasts for that R session only, so each
+`Rscript` call that installs packages repeats it, or the user sets
+`repos` in their own `.Rprofile`. On a distribution P3M has no binaries
+for, pak compiles from source and needs the toolchain `zur doctor`
+lists. The same holds for a package P3M has not built for the running
+distribution: its Debian 12 index lacks `data.table`, `RcppArmadillo`
+and `xml2` (§18.2), so there the recipe compiles `data.table` from
+source. Debian 13 has them.
 
 ## 7. macOS: CRAN's binaries, unmodified
 
@@ -731,7 +737,7 @@ For each end point:
   `setup-r-dependencies@v2` for the same package, with no cache for
   cold.
 
-One more cold case runs in a `debian:12-slim` container that has uv
+One more cold case runs in a `debian:13-slim` container that has uv
 but no Python, where uv first downloads an interpreter for the
 launcher: the honest cost on a bare image.
 
@@ -759,9 +765,11 @@ Tests run against the installed tool and compare against known answers:
   same home used from Ubuntu and Rocky containers gives two libraries;
   a package in it still loads after `uv tool install --reinstall`; with
   a read-only home R starts and exits 0.
-- **`pak` recipe (§6.6):** in the Ubuntu and Rocky containers `pak`
-  installs, `pak::pkg_install("data.table")` downloads a binary (no
-  compiler is run) and the package loads.
+- **`pak` recipe (§6.6):** in the Ubuntu 24.04, Debian 13 and Rocky
+  Linux 8 containers `pak` installs, the recipe's `pkg_install("data.table")` after
+  `repo_add(CRAN = "PPM@latest")` downloads a binary (no compiler is
+  run) and the package loads; `getOption("repos")` is `@CRAN@` before
+  and after (D9).
 - **Front-ends:** `R.home()` inside the tool; an inherited `R_HOME`
   ignored; `R` reads a script from stdin; exit status passed through;
   an `Rscript` started from inside R with `system2()` reports the same
@@ -811,7 +819,8 @@ Tests run against the installed tool and compare against known answers:
 - **Containers:** the Linux tests run in Ubuntu 24.04, Debian 12 and
   Rocky Linux 8 images, and in two minimal ones: `debian:12-slim`
   (no fonts or CA bundle; its `tzdata` is deleted before the tests) and
-  `rockylinux:8-minimal` (no `which`).
+  `rockylinux:8-minimal` (no `which`). The `pak` recipe runs in Debian
+  13 instead of Debian 12, where P3M's coverage is partial (§18.2).
 
 ## 14. Licensing
 
@@ -858,9 +867,14 @@ the system profile `library/base/R/Rprofile` (§6.4).
 - **D7. The build scripts write the wheels directly.** `pyproject.toml`
   describes the build environment only.
 - **D8. No zig for R itself** in the first release (§4).
-- **D9. No repository configuration.** `repos` stays as base R sets it.
-  `pak` is the documented way to get binary packages (§6.6); D9 is
-  reopened if `pak` does not select them on a zur-built R.
+- **D9. No repository configuration.** `repos` stays as base R sets it
+  (`@CRAN@`), and zur sets no user agent, environment variable or
+  profile for repositories. The documented recipe (§6.6) names P3M
+  itself, through `pak::repo_add(CRAN = "PPM@latest")`. Decided
+  2026-11-24 after stage 8 (§18.2): pak maps `@CRAN@` to a source-only
+  mirror, so the recipe, not zur, chooses the repository. Rejected:
+  setting `repos` in R's profile (differs from CRAN's R, skipped by
+  `--vanilla`, freezes a distribution table in the wheel).
 - **D10. zur's own user library**, `~/R/zur/<platform>/<major.minor>`,
   with the distribution in `<platform>` on Linux, set through
   `R_LIBS_USER` only when the user has not set it.
@@ -921,8 +935,10 @@ not a decision.
    - Linux: R's link with `-static-libgfortran` succeeds in the
      manylinux image. If not, the hashed graft of §6.2. Answered
      2026-11-24 (stage 3): no; the graft is taken (§18).
-   - `pak` selects P3M binaries on a zur-built R (§6.6). If not, D9 is
-     reopened.
+   - `pak` selects P3M binaries on a zur-built R (§6.6). Decided
+     2026-11-24 (stage 8): not with `repos` as base R sets it (§18.2);
+     the recipe adds P3M with `pak::repo_add()`, and D9 stands as
+     restated in §15.
    - macOS: §7 holds on arm64 and on a runner that never had a
      framework R. If not, the patcher that §7 replaced comes back as
      a new decision.
@@ -1082,3 +1098,74 @@ Fortran runtime and glibc; fontconfig reaches R only through cairo.
 The image sets `PKG_CONFIG_PATH=/usr/local/lib/pkgconfig`, which the
 build now overrides (§6.1). Green run:
 https://github.com/pedrobtz/py-zur/actions/runs/45301423657.
+
+### 18.2 Measurements, 2026-11-24 (stage 8)
+
+**`pak` on a zur-built R does not select P3M binaries.** The §6.6
+recipe (`tests/recipes.py`), run in `ubuntu:24.04` and `rockylinux:8`
+with no compiler and with `libgomp1`/`libgfortran5` (`libgomp`/
+`libgfortran`) installed, in job `pak-linux-x86_64` of
+https://github.com/pedrobtz/py-zur/actions/runs/45329772193:
+
+- `pak` 0.11.2 installs from its own repository
+  (`pak_0.11.2_R-4-6_x86_64-linux-gnu.tar.gz`).
+- `pak::pkg_install("data.table")` then reports `Got data.table
+  1.18.6.1 (source)` and `Building data.table 1.18.6.1`, and fails in
+  the build for want of a compiler, in both containers.
+- With `repos` as base R sets it (`CRAN = "@CRAN@"`), pak resolves CRAN
+  to `https://cran.rstudio.com` (pkgcache's and pkgdepends'
+  `default_cran_mirror()`), which serves source only: the URL pak used
+  was `https://cran.rstudio.com/src/contrib/data.table_1.18.6.1.tar.gz`.
+  R's user agent is the standard `R (4.6.2 x86_64-pc-linux-gnu x86_64
+  linux-gnu)`; pak never asks P3M, so the user agent plays no part.
+- pak detects the platform correctly (`x86_64-pc-linux-gnu-ubuntu-24.04`,
+  `x86_64-pc-linux-gnu-rocky-8.10`) and `pak::ppm_has_binaries()` is
+  `TRUE` in both. After `pak::repo_add(CRAN = "PPM@latest")`, CRAN
+  becomes `https://packagemanager.posit.co/cran/__linux__/noble/latest`
+  (Ubuntu) or `…/__linux__/centos8/latest` (Rocky), and `pkg_deps()`
+  gives data.table with the binary platform of the container. P3M
+  binaries are therefore reachable on a zur-built R, but only with a
+  `repos` setting. D9 was restated on that basis (2026-11-24): the
+  recipe of §6.6 makes that setting itself, and zur makes none.
+
+
+**With `repo_add(CRAN = "PPM@latest")` (the recipe of §6.6, D9 as
+restated).** In run
+https://github.com/pedrobtz/py-zur/actions/runs/45331374753, with no
+compiler in the container:
+
+- Ubuntu 24.04 and Rocky Linux 8: `data.table` installs as a P3M binary
+  and gives its known answer.
+- Debian 12: pak reports `Got data.table 1.18.6.1 (source)` and fails
+  with "Could not find tools necessary to compile a package". P3M lists
+  bookworm with binaries, but its `4.6-bookworm` index (16,181 packages,
+  against 25,629 for `4.6-noble`) has no `data.table`, `RcppArmadillo`
+  or `xml2`. Its `4.5-bookworm` index has had no `data.table` since at
+  least 2026-10-01; the 2026-06-01 snapshot had 1.18.4. Trixie's
+  `4.6` index has `data.table`.
+- On 2026-11-24 `4.6-trixie` held 25,538 packages, with `data.table`,
+  `RcppArmadillo` and `xml2`; the pak job and the benchmark's slim case
+  use Debian 13.
+
+**Binary set (stage 8).** Chosen by reading `DT_NEEDED` of the P3M
+binaries for R 4.6 on Ubuntu 24.04 (noble, 2026-11-24); known answers in
+`BINARY_SET` of `tests/test_installed.py`:
+
+| Package | Covers | `DT_NEEDED` beyond `libR.so` and glibc |
+| --- | --- | --- |
+| `jsonlite` 2.0.0 | plain C | none |
+| `Rcpp` 1.1.2 | C++ | `libstdc++.so.6`, `libgcc_s.so.1` |
+| `deSolve` 1.42 | Fortran | `libblas.so.3`, `libgfortran.so.5` |
+| `data.table` 1.18.6.1 | OpenMP | `libgomp.so.1`, `libz.so.1` |
+| `RcppArmadillo` 15.8.0-1 | BLAS and LAPACK | `liblapack.so.3`, `libblas.so.3`, `libgomp.so.1`, `libstdc++.so.6`, `libgcc_s.so.1` |
+
+`RcppArmadillo` is the BLAS user: it needs both reference names and only
+`Rcpp` besides. The others read were `robustbase` (both names; imports
+`DEoptimR`), `quantreg` (both names; needs `Matrix`, `survival`, which
+are recommended packages zur does not ship), `nloptr` and `xml2`
+(neither name). Its process maps `libblas.so.3` and `liblapack.so.3`
+from `R.home("lib")` (D16), and `data.table::getDTthreads()` is 2 on a
+4-core runner with the host's `libgomp` (D17). As root on Ubuntu,
+`pak::pkg_install("xml2")` installs `libxml2` with apt. Green run:
+https://github.com/pedrobtz/py-zur/actions/runs/45332854896; pak job
+39 to 57 s per container.

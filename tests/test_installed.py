@@ -14,7 +14,9 @@ runs the no-bundle check, before the workflow installs one. ZUR_WHEEL
 names the installed wheel, for the reinstall check. ZUR_DOCKER=1 runs
 the checks that start containers themselves (a shared and a read-only
 home), from a machine with Docker and ZUR_WHEEL; they need no
-installed zur.
+installed zur. ZUR_PAK=1 runs the pak recipe and the binary packages,
+which install into the user library from the network, in a container
+with no compiler.
 """
 
 import os
@@ -28,6 +30,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import pytest
+from recipes import PAK_RECIPE, pak_install
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -233,6 +236,7 @@ PLATFORMS = {
     "ubuntu:24.04": r"ubuntu-24\.04",
     "debian:12": r"debian-12",
     "debian:12-slim": r"debian-12",
+    "debian:13": r"debian-13",
     "rockylinux:8": r"rocky-8\.\d+",
     "rockylinux:8-minimal": r"rocky-8\.\d+",
 }
@@ -398,6 +402,182 @@ def test_read_only_home_starts_r(unpacked_wheel, tmp_path, image):
     # R started without the library: it could not be created.
     assert out == f"TRUE /home/zur/R/zur/x86_64-{platform}/{R_MINOR}"
     assert list(home.iterdir()) == []
+
+
+# pak and P3M binaries (design §6.6, §13) -----------------------------------
+
+pak = pytest.mark.skipif(
+    os.environ.get("ZUR_PAK") != "1",
+    reason="needs ZUR_PAK=1: network, and a container with no compiler",
+)
+on_ubuntu = pytest.mark.skipif(
+    CONTAINER != "ubuntu:24.04", reason="the binary set runs on Ubuntu 24.04"
+)
+COMPILERS = ("cc", "gcc", "c++", "g++", "gfortran", "make")
+
+# The fields pak writes into an installed package's DESCRIPTION.
+REMOTE_FIELDS = "RemoteType RemotePkgRef RemoteRepos RemotePkgPlatform Built"
+P3M = r"https://(p3m\.dev|packagemanager\.posit\.co)/cran/__linux__/"
+
+# R code that prints getOption("repos"), run as a user would: no --vanilla.
+REPOS = 'cat(names(getOption("repos")), getOption("repos"))'
+
+
+def remote_fields(package):
+    code = (
+        f"d <- packageDescription({package!r});"
+        f" for (f in strsplit({REMOTE_FIELDS!r}, ' ')[[1]])"
+        " cat(f, ': ', d[[f]], '\\n', sep = '')"
+    )
+    out = rscript(code).stdout
+    return dict(line.split(": ", 1) for line in out.splitlines())
+
+
+def assert_p3m_binary(package, log=""):
+    # pak records where the package came from: a P3M binary repository for
+    # this distribution, not CRAN's source tarball.
+    fields = remote_fields(package)
+    assert fields["RemoteType"] == "standard", (fields, log)
+    assert fields["RemotePkgPlatform"] != "source", (fields, log)
+    assert re.match(P3M, fields["RemoteRepos"]), (fields, log)
+
+
+def plain_rscript(code, timeout=900):
+    result = run(["Rscript", "-e", code], timeout=timeout)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result
+
+
+@pytest.fixture(scope="module")
+def pak_recipe():
+    """The §6.6 recipe, run once, with what ``repos`` was before it."""
+    # No compiler anywhere: a package that needs compiling cannot install
+    # from source here, so success means pak chose a binary.
+    assert [c for c in COMPILERS if shutil.which(c)] == []
+    before = plain_rscript(REPOS).stdout
+    return before, run(["sh", "-ec", PAK_RECIPE], timeout=900)
+
+
+@pak
+def test_pak_recipe_installs_a_p3m_binary(pak_recipe):
+    _, result = pak_recipe
+    log = result.stdout + result.stderr
+    assert result.returncode == 0, log
+    assert rout("data.table::data.table(a = 1:3)[, sum(a)]") == "6"
+    assert_p3m_binary("data.table", log)
+
+
+@pak
+def test_pak_leaves_repos_as_base_r_sets_it(pak_recipe):
+    # D9: zur sets no repository, before the recipe or after it; repo_add()
+    # lasted for the recipe's own session only.
+    before, _ = pak_recipe
+    assert before == "CRAN @CRAN@"
+    assert plain_rscript(REPOS).stdout == "CRAN @CRAN@"
+
+
+# The binary set (roadmap stage 8): plain C, C++, Fortran, OpenMP and a
+# BLAS/LAPACK user, each with a known answer. The P3M binaries' DT_NEEDED
+# (Ubuntu 24.04, 2026-11-24, design §18.2) is beside each.
+BINARY_SET = {
+    # libR.so only.
+    "jsonlite": (
+        'cat(jsonlite::toJSON(list(a = 1:3, b = "x"), auto_unbox = TRUE))',
+        '{"a":[1,2,3],"b":"x"}',
+    ),
+    # libstdc++.so.6. The header's version string, compiled in, against
+    # the DESCRIPTION's.
+    "Rcpp": (
+        "cat(as.character(Rcpp::getRcppVersion()) =="
+        ' packageDescription("Rcpp")$Version)',
+        "TRUE",
+    ),
+    # libgfortran.so.5, libblas.so.3: dy/dt = -y from 1, at t = 1, is exp(-1).
+    "deSolve": (
+        "y <- deSolve::ode(1, c(0, 1), function(t, y, p) list(-y), NULL,"
+        " rtol = 1e-10, atol = 1e-12)[2, 2];"
+        " cat(abs(y - exp(-1)) < 1e-8)",
+        "TRUE",
+    ),
+    # libgomp.so.1.
+    "data.table": ("cat(data.table::data.table(a = 1:3)[, sum(a)])", "6"),
+    # libblas.so.3, liblapack.so.3 (and libgomp.so.1). Least squares on an
+    # exact line, against base R's own QR.
+    "RcppArmadillo": (
+        "x <- cbind(1, 1:10); y <- 1 + 2 * (1:10);"
+        " b <- RcppArmadillo::fastLmPure(x, y)$coefficients;"
+        " cat(max(abs(b - c(1, 2))) < 1e-10,"
+        " max(abs(b - qr.coef(qr(x), y))) < 1e-10)",
+        "TRUE TRUE",
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def binary_set(pak_recipe):
+    _, recipe = pak_recipe
+    assert recipe.returncode == 0, recipe.stdout + recipe.stderr
+    result = run(["Rscript", "-e", pak_install(*BINARY_SET)], timeout=900)
+    log = result.stdout + result.stderr
+    assert result.returncode == 0, log
+    return log
+
+
+@pak
+@on_ubuntu
+@pytest.mark.parametrize("package", BINARY_SET)
+def test_pak_binary_package_gives_its_known_answer(binary_set, package):
+    code, expected = BINARY_SET[package]
+    assert rscript(code).stdout == expected
+    assert_p3m_binary(package, binary_set)
+
+
+@pak
+@on_ubuntu
+def test_pak_data_table_uses_the_hosts_openmp(binary_set):
+    # R has no OpenMP (D17); data.table's threads come from the host's
+    # libgomp. The runner has 4 cores, and data.table takes half.
+    assert os.cpu_count() >= 4
+    assert int(rout("data.table::getDTthreads()")) >= 2
+
+
+@pak
+@on_ubuntu
+def test_pak_blas_user_maps_rs_blas(binary_set, r_home):
+    # D16: the package's libblas.so.3 and liblapack.so.3 are R's, from
+    # R.home("lib"), not a system BLAS. The kernel names the file after
+    # any symlink, so every BLAS or LAPACK library mapped is listed but
+    # R's own libRblas.so and libRlapack.so, which R itself loads.
+    code = (
+        "invisible(loadNamespace('RcppArmadillo'));"
+        " m <- readLines('/proc/self/maps');"
+        " m <- m[grepl('/lib[^/]*(blas|lapack)[^/]*[.]so', m) &"
+        " !grepl('/libR(blas|lapack)[.]so$', m)];"
+        " cat(unique(sub('^.* ', '', m)), sep = '\\n')"
+    )
+    mapped = {Path(p).resolve() for p in rscript(code).stdout.split()}
+    lib = (r_home / "lib").resolve()
+    assert mapped == {lib / "libblas.so.3", lib / "liblapack.so.3"}
+
+
+@pak
+@on_ubuntu
+@pytest.mark.skipif(os.getuid() != 0, reason="pak installs system packages as root")
+def test_pak_installs_system_requirements(pak_recipe):
+    # xml2 declares libxml2; pak installs it with apt, and the binary loads.
+    _, recipe = pak_recipe
+    assert recipe.returncode == 0, recipe.stdout + recipe.stderr
+
+    def has_libxml2():
+        status = run(["dpkg-query", "-W", "-f=${Status}", "libxml2"]).stdout
+        return status == "install ok installed"
+
+    assert not has_libxml2()
+    result = run(["Rscript", "-e", pak_install("xml2")], timeout=900)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert has_libxml2()
+    assert rout('xml2::xml_text(xml2::read_xml("<a>1</a>"))') == "1"
+    assert_p3m_binary("xml2", result.stdout + result.stderr)
 
 
 # Base R ----------------------------------------------------------------------

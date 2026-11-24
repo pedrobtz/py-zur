@@ -264,6 +264,48 @@ jobs:
           ZUR_DOCKER=1 ZUR_WHEEL="$(ls "$PWD"/dist/zur-*.whl)" \
             uv run pytest -v tests/test_installed.py -k "shared_home or read_only_home"
 
+  # The pak recipe of design §6.6 and P3M binary packages (roadmap stage
+  # 8), in containers with no compiler. The host runtimes binary packages
+  # assume (design §6.5) are installed here, since zur doctor comes later.
+  # The binary set and the system-requirements check run on Ubuntu only.
+  pak-linux-x86_64:
+    needs: build-linux-x86_64
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:24.04", "debian:13", "rockylinux:8"]
+    container: ${{ matrix.image }}
+    env:
+      ZUR_CONTAINER: ${{ matrix.image }}
+    steps:
+      - name: Host runtimes for binary packages
+        run: |
+          if command -v apt-get >/dev/null; then
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              ca-certificates libgomp1 libgfortran5
+          else
+            dnf install -y libgomp libgfortran tar gzip
+          fi
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
+      - name: Install zur as a uv tool
+        run: |
+          uv tool install dist/zur-*.whl
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+      - name: pak recipe and binary packages
+        # Also R's start, CA bundle, HTTPS and user library, since
+        # debian:13 is in no other job.
+        run: |
+          k="pak or r_version or ca_bundle_is_the_system_one"
+          k="$k or https_download or user_library_is_zurs_own"
+          ZUR_PAK=1 uv run pytest -v tests/test_installed.py -k "$k"
+
   # Full profile. Every job here has `needs: profile` and
   # `if: needs.profile.outputs.full == 'true'`. The host compiler matrix
   # (stage 10) and the other platforms' legs (stages 20 to 23) join here;

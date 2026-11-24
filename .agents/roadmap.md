@@ -24,7 +24,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | [#30](https://github.com/pedrobtz/py-zur/pull/30) | 2026-11-24 |
 | 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | [#31](https://github.com/pedrobtz/py-zur/pull/31) | 2026-11-24 |
 | 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | [#32](https://github.com/pedrobtz/py-zur/pull/32) | 2026-11-24 |
-| 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | | |
+| 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | [#33](https://github.com/pedrobtz/py-zur/pull/33) | 2026-11-24 |
 | 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | [#10](https://github.com/pedrobtz/py-zur/issues/10) | | |
 | 10 | [Source packages across host compilers](#stage-10--source-packages-across-host-compilers) | full | [#11](https://github.com/pedrobtz/py-zur/issues/11) | | |
 | 11 | [zur doctor](#stage-11--zur-doctor) | quick | [#12](https://github.com/pedrobtz/py-zur/issues/12) | | |
@@ -532,7 +532,7 @@ containers), [§15 D13](design.md#15-decisions).
 
 > Design gap: §6.4 takes the CA bundle from the system, and
 > `debian:12-slim` has none, so HTTPS (and with it the `pak` recipe of
-> §6.6 and the benchmark's `debian:12-slim` case of §12) fails there
+> §6.6 and the benchmark's `debian:13-slim` case of §12) fails there
 > until `ca-certificates` is installed. The design does not say whether
 > `zur doctor` should report a missing bundle. This roadmap installs
 > `ca-certificates` wherever a minimal image needs HTTPS and leaves
@@ -624,11 +624,14 @@ distribution, unless the user chose another (D10).
 zur-built R, and the binary packages CI users install load and give
 known answers.
 
-**Confirm first.** In `ubuntu:24.04` and `rockylinux:8` containers with
-no compiler on `PATH` (and with `libgomp1`/`libgfortran5`, or `libgomp`/
-`libgfortran`, installed by the job, since `zur doctor` comes later),
-the two commands of §6.6 install `pak`, and `pak::pkg_install("data.table")`
-installs a P3M binary, with no `repos` or user-agent setting.
+**Confirm first.** In `ubuntu:24.04`, `debian:13` and `rockylinux:8`
+containers with no compiler on `PATH` (and with `libgomp1`/`libgfortran5`,
+or `libgomp`/`libgfortran`, installed by the job, since `zur doctor`
+comes later), the commands of §6.6 (`PAK_RECIPE`) install `pak`, and
+its `pak::repo_add(CRAN = "PPM@latest"); pak::pkg_install("data.table")`
+installs a P3M binary, with no other `repos` or user-agent setting.
+Restated 2026-11-24 with the new D9 (design §15, §18.2): the first
+confirmation, without `repo_add()`, built `data.table` from source.
 
 **Work.**
 - The §6.6 recipe as a test helper, the single place the tests take it
@@ -642,7 +645,7 @@ installs a P3M binary, with no `repos` or user-agent setting.
 - The result recorded in §18.
 
 **Tests.**
-- `pak` recipe (§13), in Ubuntu 24.04 and Rocky Linux 8: `pak` installs,
+- `pak` recipe (§13), in Ubuntu 24.04, Debian 13 and Rocky Linux 8: `pak` installs,
   `pak::pkg_install("data.table")` succeeds with no compiler present,
   and `data.table::data.table(a = 1:3)[, sum(a)]` is `6`.
 - Binary packages (§13), on Ubuntu 24.04: each package of the set
@@ -661,6 +664,31 @@ installs a P3M binary, with no `repos` or user-agent setting.
   depend on the answer.
 - Every **Tests.** line exists and was seen to fail.
 - Quick profile green.
+
+**Deviations.** 2026-11-24:
+- The recipe changed with the new D9 (design §15): `PAK_RECIPE` in
+  `tests/recipes.py` adds `pak::repo_add(CRAN = "PPM@latest")` before
+  `pkg_install()`; `pak_install()` there builds the same call for the
+  binary set and `xml2`. Added test beyond the stage's list:
+  `getOption("repos")` is `@CRAN@` before and after the recipe (D9).
+- The checks run in a job of their own, `pak-linux-x86_64`
+  (`ubuntu:24.04`, `debian:13`, `rockylinux:8`), gated by `ZUR_PAK=1`,
+  which installs the host runtimes (`ca-certificates libgomp1
+  libgfortran5` with apt; `libgomp libgfortran tar gzip` with dnf) and
+  no compiler. `debian:13` is in no other job, so that job also runs
+  the R start, CA bundle, HTTPS and user-library checks there.
+- The BLAS user is `RcppArmadillo` (design §18.2); every package of the
+  set is also checked to be a P3M binary (pak's `RemotePkgPlatform` and
+  `RemoteRepos`). The `/proc/self/maps` check lists every BLAS or
+  LAPACK library mapped besides R's own `libRblas.so` and
+  `libRlapack.so`, since the kernel names a symlinked system BLAS by
+  its target.
+- Quick profile with the pak job: 6 min 32 s from start to the last job
+  ([run](https://github.com/pedrobtz/py-zur/actions/runs/45332854896)).
+
+> Note 2026-11-24: `debian:12` is not in the pak job. P3M's bookworm
+> index lacks `data.table` (§18.2), so the recipe compiles from source
+> there. Debian 12 stays in the stage 6 matrix.
 
 **Design.** [§6.6](design.md#66-packages-pak-is-the-documented-route),
 [§15 D9, D16, D17](design.md#15-decisions), [§16](design.md#16-open-questions) question 1.
@@ -992,7 +1020,7 @@ and the Linux release gate is a script, not a judgement.
   restored by `actions/cache`) and the baseline
   (`r-lib/actions/setup-r@v2` with the same `r-version`, then
   `setup-r-dependencies@v2` for `data.table`, no cache for cold); the
-  extra cold case in `debian:12-slim` with uv and no Python. Each case
+  extra cold case in `debian:13-slim` with uv and no Python. Each case
   at least five times; medians in a JSON artifact and the job summary.
 - The runner matrix lists `ubuntu-latest`, `ubuntu-24.04-arm`,
   `macos-latest` and `windows-latest`; only `ubuntu-latest` is enabled
@@ -1017,9 +1045,15 @@ and the Linux release gate is a script, not a judgement.
 **Design.** [§12](design.md#12-speed-benchmark), goal 1 and the
 anti-goals in [§2](design.md#2-goals-non-goals-anti-goals).
 
+> Note 2026-11-24 (stage 8, new D9): the cold and warm cases run the
+> §6.6 recipe as restated, with `pak::repo_add(CRAN = "PPM@latest")`
+> before `pkg_install()`; the baseline is unchanged. The slim case runs
+> in `debian:13-slim`, because P3M's bookworm index lacks `data.table`
+> (§18.2).
+
 > Readings used: §12 gates "on Linux", which this roadmap applies to
 > each Linux wheel before it is uploaded to PyPI, so stage 20 runs the
-> gate on `ubuntu-24.04-arm`. The `debian:12-slim` case needs
+> gate on `ubuntu-24.04-arm`. The `debian:13-slim` case needs
 > `ca-certificates` for R's HTTPS (see stage 6); its install is inside
 > the timed region, as the honest cost on a bare image.
 
@@ -1057,6 +1091,16 @@ tests prove.
 
 **Design.** [§1](design.md#1-what-zur-is), [§6.6](design.md#66-packages-pak-is-the-documented-route),
 [§11](design.md#11-versioning-and-r-versions), [§14](design.md#14-licensing).
+
+> Note 2026-11-24 (stage 8, new D9): the README's recipe equals
+> `PAK_RECIPE` (`tests/recipes.py`) character for character, including
+> its `pak::repo_add(CRAN = "PPM@latest")`. The README adds §6.6's two
+> sentences: the setting lasts for one R session, and on a distribution
+> P3M has no binaries for pak compiles from source. No
+> `install.packages()` line for P3M is documented unless a test covers
+> it.
+> The README also gets §6.6's Debian 12 sentence; `PAK_RECIPE` is the
+> same on every distribution (2026-11-24).
 
 ## Stage 18 — Review
 
