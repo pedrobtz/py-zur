@@ -367,3 +367,21 @@ def test_internal_tzcode(members):
     (call,) = [s for s in makeconf.splitlines() if s.startswith("# configure ")]
     assert "'--with-internal-tzcode'" in call
     assert f"{RUNTIME}/lib/R/share/zoneinfo/Europe/Zurich" in members
+
+
+# Source packages across host compilers (design §6.3, roadmap stage 10) -------
+
+
+def test_makeconf_picks_the_cxx_standard_per_host(members):
+    makeconf = members[f"{RUNTIME}/lib/R/etc/Makeconf"][1].decode().splitlines()
+    probe = (
+        "ZUR_CXXSTD := $(shell g++ -std=gnu++20 -fsyntax-only -x c++ /dev/null"
+        " 2>/dev/null && echo gnu++20 || echo gnu++17)"
+    )
+    assert makeconf.count(probe) == 1
+    (cxx,) = [s for s in makeconf if s.startswith("CXX = ")]
+    assert cxx == "CXX = g++ -std=$(ZUR_CXXSTD)"
+    assert makeconf.index(probe) < makeconf.index(cxx)
+    # The explicit standards stay as the build's compiler set them.
+    for std in ["17", "20", "23", "26"]:
+        assert f"CXX{std}STD = -std=gnu++{std}" in makeconf

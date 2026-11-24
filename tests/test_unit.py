@@ -855,7 +855,7 @@ def test_makeconf_relocated(tmp_path):
     assert "/opt/zur" not in text
     assert "\nR_HOME=" not in text
     assert "\nCC = gcc\n" in text
-    assert "\nCXX = g++ -std=gnu++20\n" in text
+    assert f"\n{build.CXXSTD_PROBE}\nCXX = g++ -std=$(ZUR_CXXSTD)\n" in text
     assert "\nCPPFLAGS =\n" in text and "\nLDFLAGS =\n" in text
     for lang in ["C", "CXX", "F"]:
         assert f"\nSHLIB_OPENMP_{lang}FLAGS = -fopenmp\n" in text
@@ -868,6 +868,37 @@ def test_makeconf_with_another_compiler_is_refused(tmp_path):
     path.write_text(MAKECONF.replace("FC = gfortran", "FC = flang"))
     with pytest.raises(SystemExit, match="FC is flang, expected gfortran"):
         build.relocate_makeconf(path, "/opt/zur", "/opt/zur-deps")
+
+
+def test_makeconf_without_a_cxx_standard_is_refused(tmp_path):
+    path = tmp_path / "Makeconf"
+    path.write_text(MAKECONF.replace(" -std=gnu++20", ""))
+    with pytest.raises(SystemExit, match="0 CXX lines with a -std flag"):
+        build.relocate_makeconf(path, "/opt/zur", "/opt/zur-deps")
+
+
+@pytest.mark.skipif(shutil.which("make") is None, reason="needs make")
+@pytest.mark.parametrize(
+    ("gxx", "expected"), [("exit 0", "gnu++20"), ("exit 1", "gnu++17")]
+)
+def test_makeconf_cxx_standard_follows_the_hosts_gxx(tmp_path, gxx, expected):
+    # A g++ that accepts (exit 0) or rejects (exit 1) every flag, first on
+    # PATH; make expands CXX through the probe line.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "g++"
+    fake.write_text(f"#!/bin/sh\n{gxx}\n")
+    fake.chmod(0o755)
+    path = tmp_path / "Makeconf"
+    path.write_text(MAKECONF)
+    build.relocate_makeconf(path, "/opt/zur", "/opt/zur-deps")
+    (tmp_path / "Makefile").write_text("include Makeconf\nshow:\n\t@echo $(CXX)\n")
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    out = subprocess.run(
+        ["make", "-s", "-C", str(tmp_path), "show"],
+        capture_output=True, text=True, env=env, check=True,
+    ).stdout  # fmt: skip
+    assert out.strip() == f"g++ -std={expected}"
 
 
 def test_ldpaths_loses_the_built_dependencies(tmp_path):

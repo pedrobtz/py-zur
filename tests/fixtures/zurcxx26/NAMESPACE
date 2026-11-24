@@ -1,0 +1,2 @@
+useDynLib(zurcxx26)
+export(cplusplus, total)

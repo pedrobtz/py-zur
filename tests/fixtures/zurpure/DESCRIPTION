@@ -1,0 +1,7 @@
+Package: zurpure
+Version: 0.1
+Title: Test Fixture
+Description: A zur test fixture (tests/test_installed.py).
+License: MIT
+Author: zur
+Maintainer: zur <zur@example.com>
