@@ -16,6 +16,11 @@ name: build
 # (`gh run rerun <run-id>`) to switch profile.
 #
 # Documentation-only changes (Markdown, .agents/) skip the workflow.
+#
+# The dispatch input `pango` is the one-off measurement of what D14 saves
+# (roadmap stage 9): the build installs pango-devel (ZUR_MEASURE_PANGO=1),
+# its prefix test only confirms pango is in use, its wheel is uploaded as
+# wheel-linux-x86_64-pango, and no job tests it.
 
 on:
   push:
@@ -26,6 +31,11 @@ on:
   schedule:
     - cron: "17 4 * * 1" # Mondays 04:17 UTC
   workflow_dispatch:
+    inputs:
+      pango:
+        description: "Measurement only: build with pango-devel (D14), test nothing"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -97,6 +107,8 @@ jobs:
     env:
       ZUR_PREFIX: /opt/zur
       ZUR_DEPS: /opt/zur-deps
+      ZUR_MEASURE_PANGO: ${{ inputs.pango && '1' || '' }}
+      WHEEL_ARTIFACT: wheel-linux-x86_64${{ inputs.pango && '-pango' || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Start the build container
@@ -108,7 +120,7 @@ jobs:
           # Created before the mount, so it belongs to the runner's user
           # and the cache can restore into it.
           mkdir -p "$RUNNER_TEMP/zur-deps"
-          docker run -d --name zur -e ZUR_PREFIX -e ZUR_DEPS \
+          docker run -d --name zur -e ZUR_PREFIX -e ZUR_DEPS -e ZUR_MEASURE_PANGO \
             -v "$GITHUB_WORKSPACE:/io" -v "$RUNNER_TEMP/zur-deps:$ZUR_DEPS" \
             -w /io "$image" sleep infinity
           docker exec zur bash -c 'command -v uv || pipx install uv'
@@ -122,7 +134,8 @@ jobs:
           # build-deps.sh holds the recipes, so it is part of the key too.
           key: >-
             deps-linux-x86_64-${{ hashFiles('manifests/linux.toml',
-            'scripts/linux/build-deps.sh') }}-${{ steps.image.outputs.digest }}
+            'scripts/linux/build-deps.sh') }}-${{ steps.image.outputs.digest
+            }}${{ inputs.pango && '-pango' || '' }}
       - name: Build the dependencies from source
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
@@ -145,17 +158,28 @@ jobs:
       - name: DT_NEEDED of every ELF file in the prefix
         run: docker exec zur uv run --frozen scripts/elf_needed.py "$ZUR_PREFIX"
       - name: Tests against the prefix
+        if: ${{ !inputs.pango }}
         run: docker exec zur uv run --frozen pytest -v tests/test_prefix.py
+      - name: The measurement build uses pango
+        if: ${{ inputs.pango }}
+        run: >-
+          docker exec zur uv run --frozen pytest -v tests/test_prefix.py
+          -k measurement_build_has_pango
+      # Fails when the wheel is over PyPI's per-file limit, the default of
+      # --max-size (design §10).
       - name: Repair and pack the wheel
         run: |
           docker exec zur uv run --frozen scripts/build.py \
-            --prefix "$ZUR_PREFIX" --deps "$ZUR_DEPS" --out dist
+            --prefix "$ZUR_PREFIX" --deps "$ZUR_DEPS" --out dist \
+            --size-report 2>&1 | tee build-wheel.log
           wheel=$(ls dist/*.whl)
-          echo "Wheel: $(basename "$wheel"), $(stat -c %s "$wheel") bytes" \
+          echo "Wheel ($WHEEL_ARTIFACT): $(basename "$wheel"), $(stat -c %s "$wheel") bytes" \
             | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo '```'; sed -n '/^prune:/p; /^size report:/,$p' build-wheel.log; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-linux-x86_64
+          name: ${{ env.WHEEL_ARTIFACT }}
           path: dist/*.whl
           retention-days: 7
 
@@ -163,6 +187,7 @@ jobs:
   # own, so the installed-tool tests run even when one of these fails.
   check-linux-x86_64:
     needs: build-linux-x86_64
+    if: ${{ !inputs.pango }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -182,6 +207,7 @@ jobs:
   # strace skip there and run in the other three.
   test-linux-x86_64:
     needs: build-linux-x86_64
+    if: ${{ !inputs.pango }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -251,6 +277,7 @@ jobs:
   # containers themselves with docker run, R from the unpacked wheel.
   home-linux-x86_64:
     needs: build-linux-x86_64
+    if: ${{ !inputs.pango }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -270,6 +297,7 @@ jobs:
   # The binary set and the system-requirements check run on Ubuntu only.
   pak-linux-x86_64:
     needs: build-linux-x86_64
+    if: ${{ !inputs.pango }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -313,7 +341,7 @@ jobs:
 
   full:
     needs: profile
-    if: needs.profile.outputs.full == 'true'
+    if: needs.profile.outputs.full == 'true' && !inputs.pango
     runs-on: ubuntu-latest
     steps:
       - run: echo "Full profile; no extra legs yet (roadmap stage 2)."
