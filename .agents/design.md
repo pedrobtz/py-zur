@@ -223,6 +223,33 @@ zur-4.6.2.dist-info/
   install --reinstall` and upgrades within a minor version, never
   collides with another R of the same minor version on the machine,
   and is what CI caches key on.
+
+  Decided 2026-11-24 (stage 7): `bin/R` sets it (D13), so it holds with
+  and without the launcher, and R's own `etc/Renviron` line
+  `R_LIBS_USER=${R_LIBS_USER:-'%U'}` keeps that value; the build refuses
+  an `Renviron` without that line. An empty `R_LIBS_USER` counts as
+  unset, as it does for that line. On Linux `<platform>` is
+  `<arch>-<ID>-<VERSION_ID>`: `<arch>` is the wheel's (`x86_64`,
+  `aarch64`), not the running machine's; `ID` and `VERSION_ID` are read
+  from `/etc/os-release` verbatim, without running the file (no
+  fallback to `/usr/lib/os-release`), so Rocky Linux 8.10 gives
+  `x86_64-rocky-8.10` and a Rocky minor update starts a new library,
+  although P3M's RHEL binaries are per major version (the maintainer
+  may prefer the major version only on the RHEL family). Where the
+  os-release specification has defaults, they are used: no file, or no
+  `ID`, gives `ID=linux` (`x86_64-linux`); no `VERSION_ID` (rolling
+  releases such as Arch, Debian sid) leaves out `-<VERSION_ID>`
+  (`x86_64-arch`). A value with a character outside `[A-Za-z0-9._-]`
+  (the specification allows fewer) counts as missing, so no value can
+  put the library outside `~/R/zur/`. The directory is created if
+  missing; if that fails (a read-only home), R starts without the
+  library, silently: `.libPaths()` drops a directory that does not
+  exist. With `HOME` unset or empty `bin/R` sets nothing and R's
+  default applies. `~` is `$HOME` without a trailing slash, so
+  `HOME=/` gives `/R/zur/…`. The readings of the missing-file,
+  missing-`VERSION_ID` and read-only cases are the roadmap's (stage 7)
+  or follow from the specification; the maintainer may decide
+  otherwise.
 - Wheels cannot hold symlinks: every link becomes a real file or is
   removed. On Linux duplicated libraries are deduplicated by SONAME.
   On macOS a link to a library becomes a copy of it, which leaves the
@@ -729,7 +756,9 @@ Tests run against the installed tool and compare against known answers:
   zur's directory and exists; with it set, the user's value wins; the
   same holds when R is started through `$R_HOME/bin/R` without the
   launcher; on Linux the directory names the distribution, and the
-  same home used from Ubuntu and Rocky containers gives two libraries.
+  same home used from Ubuntu and Rocky containers gives two libraries;
+  a package in it still loads after `uv tool install --reinstall`; with
+  a read-only home R starts and exits 0.
 - **`pak` recipe (§6.6):** in the Ubuntu and Rocky containers `pak`
   installs, `pak::pkg_install("data.table")` downloads a binary (no
   compiler is run) and the package loads.

@@ -240,8 +240,29 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates
+      # ZUR_WHEEL: the reinstall check of the user library (stage 7).
       - name: Tests against the installed tool
-        run: uv run pytest -v tests/test_installed.py
+        run: |
+          ZUR_WHEEL="$(ls "$PWD"/dist/zur-*.whl)" \
+            uv run pytest -v tests/test_installed.py
+
+  # One home directory used by Ubuntu 24.04 and Rocky Linux 8 containers in
+  # turn, and a read-only home (roadmap stage 7). The tests start the
+  # containers themselves with docker run, R from the unpacked wheel.
+  home-linux-x86_64:
+    needs: build-linux-x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
+      - name: Shared and read-only home
+        run: |
+          ZUR_DOCKER=1 ZUR_WHEEL="$(ls "$PWD"/dist/zur-*.whl)" \
+            uv run pytest -v tests/test_installed.py -k "shared_home or read_only_home"
 
   # Full profile. Every job here has `needs: profile` and
   # `if: needs.profile.outputs.full == 'true'`. The host compiler matrix

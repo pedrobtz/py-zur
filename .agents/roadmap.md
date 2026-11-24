@@ -75,7 +75,10 @@ R package profiles are replaced by two of its own, both in
   `build-linux-x86_64` 3 min 57 s (R 147 s) and each container about
   35 to 55 s
   ([run](https://github.com/pedrobtz/py-zur/actions/runs/45310120781)),
-  well under the target.
+  well under the target. With the five containers and fontconfig built
+  (stage 6, 2026-11-24): 6 min 25 s from start to the last job, of which
+  `build-linux-x86_64` 5 min 21 s and each container 26 to 62 s
+  ([run](https://github.com/pedrobtz/py-zur/actions/runs/45322716078)).
 - **full** (`full-ci` label, weekly schedule, dispatch, and every run of
   the release workflow): quick, plus the host compiler matrix of stage
   10, plus every other platform leg that exists by then: Linux aarch64
@@ -569,6 +572,31 @@ distribution, unless the user chose another (D10).
 **Exit criteria.**
 - Every **Tests.** line exists and was seen to fail.
 - Quick profile green.
+
+**Deviations.** 2026-11-24:
+- The shared-home and read-only-home tests run in a job of their own,
+  `home-linux-x86_64`, on the runner: they start plain `ubuntu:24.04`
+  and `rockylinux:8` containers with `docker run`, R as
+  `_runtime/bin/Rscript` from the unpacked wheel (without the launcher,
+  so without uv or Python in the container), as the runner's user, the
+  home bind-mounted (`:ro` for the read-only case). The matrix
+  containers run as root, which writes any directory, so a read-only
+  home cannot be made there.
+- The readings beyond this stage's note, from the os-release
+  specification's defaults, are in design §5: no `ID` is `linux`, no
+  `VERSION_ID` is left out, a value outside `[A-Za-z0-9._-]` counts as
+  missing, and with `HOME` unset or empty `bin/R` sets nothing.
+- `<arch>` is the wheel's, written into `bin/R` by the build, not
+  `uname -m`; `/etc/os-release` is read by the shell without running it
+  or forking, so `bin/R` starts no new process when the library exists.
+- `etc/Renviron` is unchanged: R's own `R_LIBS_USER=${R_LIBS_USER:-'%U'}`
+  keeps the value; the build refuses an `Renviron` without that line.
+- Added tests beyond the stage's list: `bin/R`'s reading of
+  `os-release` in `tests/test_unit.py` (the three containers' files,
+  quotes, a last line without newline, no `ID`, no `VERSION_ID`, bad
+  values, no file) under `sh`, `dash` and `bash`, compared with sourcing
+  the file; an empty `R_LIBS_USER`; no `HOME`; an unwritable home; the
+  `Renviron` refusal.
 
 **Design.** [§5](design.md#5-wheel-layout-and-launcher), [§15 D10, D13](design.md#15-decisions).
 

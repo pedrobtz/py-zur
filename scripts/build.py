@@ -157,11 +157,51 @@ for zur_ca in /etc/ssl/certs/ca-certificates.crt \\
   fi
 done
 unset zur_ca
+## zur (design §5, D10): zur's own user library, per distribution and R
+## minor version, unless the user has chosen another (etc/Renviron keeps
+## a value set here or by the user). <platform> is <arch>-<ID>-<VERSION_ID>
+## from /etc/os-release, read without running it; a missing ID is
+## "linux" as the os-release specification has it, a missing VERSION_ID
+## is left out, and a value outside the characters the specification
+## allows counts as missing. The directory is created when possible;
+## with a read-only home R starts without it.
+if test -z "${R_LIBS_USER}" && test -n "${HOME}"; then
+  zur_id=linux
+  zur_version_id=
+  if test -r /etc/os-release; then
+    while IFS='=' read -r zur_key zur_value || test -n "${zur_key}"; do
+      zur_value=${zur_value#[\\"\\']}
+      zur_value=${zur_value%[\\"\\']}
+      case "${zur_value}" in
+        "" | *[!A-Za-z0-9._-]*) continue ;;
+      esac
+      case "${zur_key}" in
+        ID) zur_id="${zur_value}" ;;
+        VERSION_ID) zur_version_id="-${zur_value}" ;;
+      esac
+    done < /etc/os-release
+  fi
+  R_LIBS_USER="${HOME%/}/R/zur/@ARCH@-${zur_id}${zur_version_id}/@R_MINOR@"
+  export R_LIBS_USER
+  test -d "${R_LIBS_USER}" || mkdir -p "${R_LIBS_USER}" 2>/dev/null || :
+  unset zur_id zur_version_id zur_key zur_value
+fi
 """
 
+# The user library's arch is the wheel's, not the running machine's.
+ARCH = TAG.split("_", 3)[3]
 
-def relocate_front_end(path, prefix, home_from_script):
-    """bin/R: R_HOME from the script's own location, fonts, CA bundle."""
+
+def front_end_zur(r_version, arch=ARCH):
+    """FRONT_END_ZUR for this R and architecture."""
+    minor = ".".join(r_version.split(".")[:2])
+    if not re.fullmatch(r"\d+\.\d+", minor):
+        raise SystemExit(f"R version {r_version!r}: no major.minor")
+    return FRONT_END_ZUR.replace("@ARCH@", arch).replace("@R_MINOR@", minor)
+
+
+def relocate_front_end(path, prefix, home_from_script, r_version):
+    """bin/R: R_HOME from its own location, fonts, CA bundle, library."""
     text = path.read_text()
     home = f"{prefix}/lib/R"
     # make install writes R_HOME_DIR=<home>, quoted or not.
@@ -182,7 +222,7 @@ def relocate_front_end(path, prefix, home_from_script):
     text = _replace_once(
         text,
         'R_HOME="${R_HOME_DIR}"\nexport R_HOME\n',
-        'R_HOME="${R_HOME_DIR}"\nexport R_HOME\n' + FRONT_END_ZUR,
+        'R_HOME="${R_HOME_DIR}"\nexport R_HOME\n' + front_end_zur(r_version),
         path,
     )
     text = text.replace(home, "${R_HOME_DIR}").replace(prefix, "${R_HOME_DIR}/../..")
@@ -321,16 +361,27 @@ def relocate_rprofile(path):
     path.write_text(text + RPROFILE_ZUR)
 
 
-def relocate(runtime, prefix, deps):
+# etc/Renviron's own line, which keeps a value bin/R or the user set
+# (design §5, D10). R's default is the fallback only when neither did.
+RENVIRON_LIBS_USER = "R_LIBS_USER=${R_LIBS_USER:-'%U'}\n"
+
+
+def relocate_renviron(path, prefix):
+    text = path.read_text()
+    if RENVIRON_LIBS_USER not in text:
+        raise SystemExit(f"{path}: R_LIBS_USER line changed upstream")
+    path.write_text(text.replace(prefix, "${R_HOME}/../.."))
+
+
+def relocate(runtime, prefix, deps, r_version):
     """Make R's text files compute paths at run time (design §6.3)."""
-    relocate_front_end(runtime / "lib/R/bin/R", prefix, "..")
-    relocate_front_end(runtime / "bin/R", prefix, "../lib/R")
+    relocate_front_end(runtime / "lib/R/bin/R", prefix, "..", r_version)
+    relocate_front_end(runtime / "bin/R", prefix, "../lib/R", r_version)
     wrap_rscript(runtime)
     etc = runtime / "lib/R/etc"
     relocate_makeconf(etc / "Makeconf", prefix, deps)
     relocate_ldpaths(etc / "ldpaths", prefix, deps)
-    renviron = etc / "Renviron"
-    renviron.write_text(renviron.read_text().replace(prefix, "${R_HOME}/../.."))
+    relocate_renviron(etc / "Renviron", prefix)
     relocate_rconfig(runtime / "lib/R/include/Rconfig.h")
     relocate_rprofile(runtime / "lib/R/library/base/R/Rprofile")
     pc = runtime / "lib/pkgconfig/libR.pc"
@@ -632,7 +683,7 @@ def main(argv=None):
     runtime = stage / "zur/_runtime"
     shutil.copytree(prefix, runtime, symlinks=True)
 
-    relocate(runtime, prefix, deps)
+    relocate(runtime, prefix, deps, r_version)
     fonts(runtime)
     blas(runtime)
     grafts = repair(stage, runtime, deps)
