@@ -867,7 +867,13 @@ the system profile `library/base/R/Rprofile` (§6.4).
   Maintainer, 2026-11-23. Rejected: R's standard user library (shared
   with any other R of that minor version, and on Linux across
   distributions) and a library inside the tool environment (wiped by
-  every reinstall).
+  every reinstall). Measured 2026-11-24 (stage 7): `uv tool install
+  --reinstall` (uv 0.7.11, and the uv `setup-uv@v6` installs in CI)
+  rewrites the wheel's files and keeps every other file in the tool's
+  directory, so a library inside it would survive that; `uv tool
+  uninstall`, and a tool directory made afresh (a CI runner without
+  it cached), remove it. The decision stands on those cases and on the
+  other reasons.
 - **D11. `zur doctor`, no bundled compiler runtimes.** R needs no
   compiler runtime from the machine (D17) and ships no `libgfortran`,
   `libgomp` or `libquadmath` on the library path; `zur doctor` reports

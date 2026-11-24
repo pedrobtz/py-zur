@@ -586,6 +586,11 @@ distribution, unless the user chose another (D10).
   specification's defaults, are in design §5: no `ID` is `linux`, no
   `VERSION_ID` is left out, a value outside `[A-Za-z0-9._-]` counts as
   missing, and with `HOME` unset or empty `bin/R` sets nothing.
+- The reinstall check also runs `uv tool uninstall zur` and installs
+  the wheel again: uv's `--reinstall` keeps files the wheel did not
+  install, so it alone cannot fail for a library inside the tool's
+  directory (design D10, measured 2026-11-24); a deleted file of the
+  wheel coming back shows the reinstall happened.
 - `<arch>` is the wheel's, written into `bin/R` by the build, not
   `uname -m`; `/etc/os-release` is read by the shell without running it
   or forking, so `bin/R` starts no new process when the library exists.

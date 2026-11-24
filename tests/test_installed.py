@@ -289,6 +289,11 @@ def test_user_library_set_by_the_user_wins(r_home, tmp_path, how):
     assert not (home / "R").exists()
 
 
+def tool(*args):
+    result = run(["uv", "tool", *args], timeout=600)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.skipif(not os.environ.get("ZUR_WHEEL"), reason="needs ZUR_WHEEL")
 def test_user_library_survives_reinstall(r_home, tmp_path):
     # Whatever the default library is (test_user_library_is_zurs_own
@@ -301,20 +306,30 @@ def test_user_library_survives_reinstall(r_home, tmp_path):
     )
     installed = run(["R", "CMD", "INSTALL", str(pkg)], timeout=600)  # no -l
     assert installed.returncode == 0, installed.stdout + installed.stderr
-    # Left in the tool's directory, so its absence shows the reinstall
-    # replaced it.
-    marker = r_home / "zur-reinstall-marker"
-    marker.write_text("")
+    code = "cat(zurkeep::hi(), dirname(find.package('zurkeep')))"
+    wheel = os.environ["ZUR_WHEEL"]
+    # A file the wheel installs, deleted, and one it does not, added: the
+    # first shows a reinstall happened, the second whether the tool's
+    # directory was started afresh.
+    owned = r_home.parent.parent / "BUILD-INFO.json"
+    stray = r_home / "zur-reinstall-marker"
+    data = owned.read_bytes()
     try:
         assert (library / "zurkeep/DESCRIPTION").is_file()
-        wheel = os.environ["ZUR_WHEEL"]
-        result = run(["uv", "tool", "install", "--reinstall", wheel], timeout=600)
-        assert result.returncode == 0, result.stderr
-        assert not marker.exists()
-        code = "cat(zurkeep::hi(), dirname(find.package('zurkeep')))"
+        owned.unlink()
+        stray.write_text("")
+        tool("install", "--reinstall", wheel)
+        assert owned.read_bytes() == data
+        assert rout(code).split(" ", 1) == ["kept", str(library)]
+        # uv's --reinstall rewrites the wheel's files and keeps any other
+        # file in the tool's directory (2026-11-24); uninstalling removes
+        # the directory, as a library inside it would be.
+        tool("uninstall", "zur")
+        tool("install", wheel)
+        assert not stray.exists()
         assert rout(code).split(" ", 1) == ["kept", str(library)]
     finally:
-        marker.unlink(missing_ok=True)
+        stray.unlink(missing_ok=True)
         shutil.rmtree(library / "zurkeep", ignore_errors=True)
 
 
@@ -342,7 +357,7 @@ def in_container(image, wheel, home, code, read_only=False):
     rscript = "/zur/zur/_runtime/bin/Rscript"
     script = f"{SOURCE_OS_RELEASE}; exec {rscript} -e {shlex.quote(code)}"
     return run(
-        ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
+        ["docker", "run", "--rm", "--quiet", "--user", f"{os.getuid()}:{os.getgid()}",
          "-v", f"{wheel}:/zur:ro",
          "-v", f"{home}:/home/zur" + (":ro" if read_only else ""),
          "-e", "HOME=/home/zur", image, "sh", "-c", script],
