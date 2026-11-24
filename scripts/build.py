@@ -141,8 +141,20 @@ def elf_files(root):
     )
 
 
+# The page size patchelf aligns the segment it adds to, per architecture
+# (design §6.3, #43). Without it patchelf takes the file's largest
+# PT_LOAD p_align, 2 MiB for most libraries, and pads each rewritten file
+# out to the next 2 MiB boundary with zeros. x86_64 kernels map 4 KiB
+# pages; aarch64 kernels may use 64 KiB ones, so 64 KiB is the smallest
+# safe value there.
+PAGE_SIZE = {"x86_64": 4096, "aarch64": 65536}
+
+
 def patchelf(*args):
-    subprocess.run(["patchelf", *map(str, args)], check=True)
+    page_size = PAGE_SIZE[TAG.split("_", 3)[3]]
+    subprocess.run(
+        ["patchelf", "--page-size", str(page_size), *map(str, args)], check=True
+    )
 
 
 # 1. relocate -----------------------------------------------------------------
@@ -562,6 +574,7 @@ def repair(stage, runtime, deps):
     libs.mkdir()
     own = {p.name for p in r_lib.iterdir()}
     grafts = {}  # original SONAME -> graft file name
+    sonames = {}  # graft file -> its new SONAME, set with the rest below
     found_at = {}  # original SONAME -> where it was found
     missing = []
     todo = list(elf_files(stage))
@@ -586,13 +599,15 @@ def repair(stage, runtime, deps):
             copy = libs / grafts[name]
             copy.write_bytes(data)
             copy.chmod(0o755)
-            patchelf("--set-soname", grafts[name], copy)
+            sonames[copy] = grafts[name]
             todo.append(copy)
     if missing:
         raise SystemExit("repair: not found:\n  " + "\n  ".join(missing))
 
+    # One patchelf call per file: each call that grows .dynstr adds a
+    # segment, so a graft rewritten twice would carry two (#43).
     for path, needed in sorted(plan.items()):
-        args = []
+        args = ["--set-soname", sonames[path]] if path in sonames else []
         dirs = []
         for name in needed:
             if name in grafts:
