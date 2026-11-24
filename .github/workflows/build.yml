@@ -31,9 +31,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  R_VERSION: "4.5.3"
-
 jobs:
   profile:
     runs-on: ubuntu-latest
@@ -84,27 +81,15 @@ jobs:
       - name: Build-free tests
         run: uv run pytest -v tests/test_unit.py
 
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - run: uv sync
-      - run: uv run scripts/build.py --r-version "$R_VERSION" --out dist
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheel-linux-64
-          path: dist/*.whl
-          retention-days: 7
-
-  # R 4.6.2 from source in the manylinux_2_28 image (roadmap stages 3 and
-  # 4, design §6.1, §6.2, §11). The image is the one pinned by digest in
+  # The Linux x86_64 wheel (roadmap stages 3 to 5, design §6). R 4.6.2 is
+  # built from source in the manylinux_2_28 image pinned by digest in
   # scripts/linux/image; every library comes from manifests/linux.toml,
   # either a dnf package at its pinned version or built from a source
   # tarball checked by SHA-256. The built ones live in /opt/zur-deps,
   # cached under the manifest's hash and the image digest. R is installed
-  # into /opt/zur inside the container and tests/test_prefix.py runs there.
-  r-source:
+  # into /opt/zur inside the container, tests/test_prefix.py runs there,
+  # and scripts/build.py repairs a copy of it into the wheel.
+  build-linux-x86_64:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -161,9 +146,38 @@ jobs:
         run: docker exec zur uv run --frozen scripts/elf_needed.py "$ZUR_PREFIX"
       - name: Tests against the prefix
         run: docker exec zur uv run --frozen pytest -v tests/test_prefix.py
+      - name: Repair and pack the wheel
+        run: |
+          docker exec zur uv run --frozen scripts/build.py \
+            --prefix "$ZUR_PREFIX" --deps "$ZUR_DEPS" --out dist
+          wheel=$(ls dist/*.whl)
+          echo "Wheel: $(basename "$wheel"), $(stat -c %s "$wheel") bytes" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist/*.whl
+          retention-days: 7
 
-  test:
-    needs: build
+  # Build checks against the wheel file (tests/test_build.py). A job of its
+  # own, so the installed-tool tests run even when one of these fails.
+  check-linux-x86_64:
+    needs: build-linux-x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
+      - name: Build checks
+        run: ZUR_WHEEL=$(ls dist/*.whl) uv run pytest -v tests/test_build.py
+
+  # The installed tool in each container (roadmap "CI profiles"). Stage 6
+  # adds the minimal images to this list.
+  test-linux-x86_64:
+    needs: build-linux-x86_64
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -171,7 +185,8 @@ jobs:
         image: ["ubuntu:24.04", "debian:12", "rockylinux:8"]
     container: ${{ matrix.image }}
     steps:
-      # which: base R calls /usr/bin/which (design §12).
+      # ca-certificates: the system bundle bin/R points at (design §6.4).
+      # which: base R calls /usr/bin/which (design §6.4; stage 6 drops it).
       # gcc, make: building source packages. strace: the relocation test.
       - name: System requirements
         run: |
@@ -180,21 +195,19 @@ jobs:
             apt-get install -y --no-install-recommends \
               ca-certificates curl gcc libc6-dev make strace
           else
-            dnf install -y which gcc make strace tar gzip
+            dnf install -y ca-certificates which gcc make strace tar gzip
           fi
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - uses: actions/download-artifact@v4
         with:
-          name: wheel-linux-64
+          name: wheel-linux-x86_64
           path: dist
       - name: Install zur as a uv tool
         run: |
           uv tool install dist/zur-*.whl
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
       - name: Tests against the installed tool
-        env:
-          ZUR_R_VERSION: ${{ env.R_VERSION }}
         run: uv run pytest -v tests/test_installed.py
 
   # Full profile. Every job here has `needs: profile` and

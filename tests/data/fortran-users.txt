@@ -1,0 +1,11 @@
+# The files under the prefix that need the Fortran runtime
+# (libgfortran.so.5, libquadmath.so.0): R's own libraries, as R 4.6.2
+# builds them (design §18.1). tests/test_prefix.py checks the build has
+# exactly these; tests/test_build.py checks that in the wheel exactly
+# these, and the copies of R's BLAS and LAPACK (D16), need the runtime
+# grafted under hashed names (D17).
+lib/R/lib/libR.so
+lib/R/lib/libRblas.so
+lib/R/lib/libRlapack.so
+lib/R/library/stats/libs/stats.so
+lib/R/modules/lapack.so

@@ -2,7 +2,8 @@
 #
 # This is not the zur distribution: scripts/build.py writes the wheel
 # itself, because it carries a whole R installation rather than Python
-# code (design §6). `uv sync` installs what the build and tests need.
+# code (design §6, D7). `uv sync` installs what the build and tests
+# need; auditwheel is for the build checks (tests/test_build.py) only.
 
 [project]
 name = "py-zur-build"
@@ -10,14 +11,13 @@ version = "0"
 description = "Build tooling for the zur wheels"
 requires-python = ">=3.10"
 dependencies = [
-    "py-rattler>=0.29",
     "pyelftools>=0.31",
     "patchelf>=0.17; sys_platform == 'linux'",
     "tomli>=2; python_version < '3.11'",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-randomly>=3.15", "ruff>=0.8"]
+dev = ["auditwheel>=6.2", "pytest>=8", "pytest-randomly>=3.15", "ruff>=0.8"]
 
 [tool.uv]
 package = false
