@@ -658,8 +658,8 @@ def test_blas_and_lapack_known_answer(r_home):
     ("var", "expected"), [("CC", "gcc"), ("CXX", "g++"), ("FC", "gfortran")]
 )
 def test_makeconf_names_the_machine_compilers(var, expected):
-    # D5. The compiler is the plain name; for C++ and Fortran, configure's
-    # standard flag (for example -std=gnu++17) may follow it.
+    # D5. The compiler is the plain name; for C++ the host's default
+    # standard follows it (design §6.3), for Fortran configure's flag may.
     result = run(["R", "CMD", "config", var])
     assert result.returncode == 0, result.stderr
     words = result.stdout.split()

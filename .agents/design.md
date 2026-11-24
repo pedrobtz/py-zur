@@ -430,7 +430,24 @@ Decided 2026-11-24 (stage 5), from the first Linux x86_64 wheel:
   standard and `Rconfig.h` decides `HAVE_ENUM_BASE_TYPE` per compiler.
   The C++ and Fortran standard flags configure chose stay after their
   compilers (stage 10 tests them across host compilers). The built
-  dependencies' `-I` and `-L` flags are removed.
+  dependencies' `-I` and `-L` flags are removed. (`CXX`'s flag was
+  replaced in stage 10, below.)
+
+Decided 2026-11-24 (stage 10), on the minimum host C++ compiler
+([#11](https://github.com/pedrobtz/py-zur/issues/11)):
+
+- **`Makeconf`, C++:** `CXX` is `g++ -std=$(ZUR_CXXSTD)`; `ZUR_CXXSTD`
+  is set when make reads `Makeconf`: `gnu++20` if the host's `g++`
+  accepts `-std=gnu++20` (gcc 10 onward), otherwise `gnu++17`. This is
+  the default R's configure would choose on that host (C++20 where
+  available, else C++17). The explicit standards (`CXX17STD` to
+  `CXX26STD`) stay as the build's compiler set them; a package asking
+  for one the host lacks fails in the compiler, where a natively
+  configured R would report the standard as undefined. Rejected: a fixed
+  `gnu++17` (differs from CRAN's R on every current host), plain `g++`
+  (gnu++14 on gcc 8, below R's floor), and raising the minimum host
+  compiler to gcc 10 (drops RHEL 8's system compiler, which D4
+  supports).
 
 ### 6.4 Runtime files a headless container lacks
 
@@ -850,8 +867,11 @@ Tests run against the installed tool and compare against known answers:
   build's compiler supports but are used with the host's, so the
   fixtures run across a matrix: the oldest supported host compiler
   (gcc 8, Rocky Linux 8), the newest in a current distribution, and
-  one in between, each covering C, C++ (the default and the newest
-  standard `Makeconf` offers) and Fortran.
+  one in between, each covering C, C++ and Fortran. The default-standard
+  C++ fixture is never skipped and reports `__cplusplus`: `201703` on
+  gcc 8, `202002` on gcc 10 onward. The newest-standard fixture runs
+  where the host's `g++` accepts that flag and is skipped elsewhere,
+  with the gcc version in the reason.
 - **`zur doctor`:** in a minimal container it names `libgomp1` and
   `libgfortran5` and exits non-zero, while `Rscript -e 1` still
   succeeds; after running the line `zur doctor --command` prints, it
@@ -924,6 +944,9 @@ the system profile `library/base/R/Rprofile` (§6.4).
 - **D4. Linux tag `manylinux_2_28`.** RHEL 8 and Ubuntu 20.04 onward.
 - **D5. No compiler in the wheel.** Source packages use the machine's
   toolchain; `Makeconf` names plain `gcc`, `g++`, `gfortran` on Linux.
+  The C standard is the host's default; the default C++ standard is
+  chosen per host, `gnu++20` or `gnu++17` (§6.3). Minimum supported
+  host compiler: gcc 8.
 - **D6. Headless prune set** as in §9; anything else needs a new
   decision.
 - **D7. The build scripts write the wheels directly.** `pyproject.toml`
@@ -1231,3 +1254,41 @@ from `R.home("lib")` (D16), and `data.table::getDTthreads()` is 2 on a
 `pak::pkg_install("xml2")` installs `libxml2` with apt. Green run:
 https://github.com/pedrobtz/py-zur/actions/runs/45332854896; pak job
 39 to 57 s per container.
+
+### 18.3 Measurements, 2026-11-24 (stage 10)
+
+**C++ standards `Makeconf` offers.** As configure wrote it with
+gcc-toolset-14 (g++ 14.2.1): `CXX = g++ -std=gnu++20` (R's default),
+and `CXX17STD` to `CXX26STD` as `-std=gnu++17`, `-std=gnu++20`,
+`-std=gnu++23` and `-std=gnu++26`; there is no `CXX11` or `CXX14`
+entry. gcc 8's manual (8.5.0, C Dialect Options) lists C++ dialects up
+to `gnu++17` and the experimental `gnu++2a` only; `gnu++20` first
+appears in gcc 10's. So gcc 8 accepts only `gnu++17` of the four, and
+rejected R's default: the decision on
+[#11](https://github.com/pedrobtz/py-zur/issues/11) (§6.3) makes the
+default per host.
+
+**Host compilers of the matrix** (`compilers-linux-x86_64`, run
+https://github.com/pedrobtz/py-zur/actions/runs/45349233117), each
+probed with `g++ -std=<flag> -fsyntax-only` by the tests:
+
+| Leg | g++ | `R CMD config CXX` | gnu++17 | gnu++20 | gnu++23 | gnu++26 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `rockylinux:8` | 8.5.0 (Red Hat 8.5.0-31) | `g++ -std=gnu++17` | yes | no | no | no |
+| `ubuntu:24.04` | 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1) | `g++ -std=gnu++20` | yes | yes | yes | no |
+| `fedora:45` | 16.2.1 (Red Hat 16.2.1-3) | `g++ -std=gnu++20` | yes | yes | yes | yes |
+
+The gnu++23 column is from GCC's documentation (gcc 11 onward), not
+probed; the others are the fixtures' probes. `fedora:45` was the
+newest Fedora release on Docker Hub on 2026-11-24 (`latest`; `46` is
+`rawhide`). The default-standard fixture reports `__cplusplus` 201703
+on gcc 8 and 202002 on gcc 13 and 16; the C++26 fixture reports a value
+above 202302 on gcc 16. `R CMD SHLIB` and `R CMD INSTALL` print the
+resolved flag; R reads `Makeconf` as text only for `SHLIB_EXT`
+(`tools:::.install_packages`, `.shlib_internal`) and in `javareconf`
+for the Java lines, so nothing reads `CXX` without make. The MASS check
+(`install.packages("MASS", type = "source")` from
+`cloud.r-project.org`, MASS 7.3-66) compiles and gives `1/2` on Ubuntu
+24.04.
+The compiler legs take 45 to 54 s each; the wheel is unchanged in
+size (59,307,417 bytes).
