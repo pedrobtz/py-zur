@@ -474,6 +474,29 @@ Decided 2026-11-24 (stage 5), from the first Linux x86_64 wheel:
   dependencies' `-I` and `-L` flags are removed. (`CXX`'s flag was
   replaced in stage 10, below.)
 
+Decided 2026-11-24, on patchelf's padding
+([#43](https://github.com/pedrobtz/py-zur/issues/43)):
+
+- **Every file patchelf rewrites is first given PT_LOAD alignments no
+  larger than the page size**, 4 KiB on x86_64 and 64 KiB on aarch64
+  (`PAGE_SIZE` in `scripts/build.py`, also passed as `--page-size`).
+  patchelf 0.19 starts the segment each rewrite adds (one per
+  operation, even within one call) at the next multiple of the file's
+  largest `p_align`, whatever `--page-size` says, and fills the gap
+  with zeros. The system libraries are linked with
+  `-z max-page-size=0x200000`, so each graft carried 2 to 8 MiB of zeros:
+  `zur.libs/` was 156.7 MB unpacked for 21.2 MB in the wheel. The
+  segments are congruent modulo the page size, which is all the loader
+  maps by; the 2 MiB alignment only lets the kernel use huge pages for
+  the text of a library this small, which nothing here needs. 64 KiB
+  is the largest page size an aarch64 kernel uses (stage 20).
+  Rejected: `--page-size` alone, and one patchelf call per graft
+  alone (both kept, but neither changes a byte on patchelf 0.19); pinning
+  patchelf 0.18, whose new segment is offset by the page size but keeps
+  `p_align` at 2 MiB, so `p_offset` and `p_vaddr` disagree modulo
+  `p_align`. A build check fails on any run of zeros longer than
+  64 KiB in an ELF file of the wheel (§13).
+
 Decided 2026-11-24 (stage 10), on the minimum host C++ compiler
 ([#11](https://github.com/pedrobtz/py-zur/issues/11)):
 
@@ -879,6 +902,17 @@ copy, and the wheel holds two (§5); `BUILD-INFO.json` grew to 30,218
 bytes (5,184 compressed). The rest is the zip entries' headers and the
 rebuilt dependencies.
 
+**Without patchelf's padding, 2026-11-24
+([#43](https://github.com/pedrobtz/py-zur/issues/43), §6.3):**
+59,432,929 bytes, 141,184 less than the build before the fix (59,574,113,
+run https://github.com/pedrobtz/py-zur/actions/runs/45392553902; this
+one https://github.com/pedrobtz/py-zur/actions/runs/45395486902). The
+install is 129,819,276 bytes unpacked instead of 229,405,344, and
+`zur.libs/` 57,128,150 instead of 156,714,198 (21,048,324 bytes in the
+wheel instead of 21,189,488). No ELF file holds a run of zeros longer
+than 64 KiB. By part, unpacked: R's libraries 32,058,038, ICU data
+26,912,825, the other 29 bundled libraries 30,215,325.
+
 **What D14 saves, 2026-11-24 (stage 9):** the same commit built once
 with `pango-devel` installed (the `pango` dispatch input of `build.yml`,
 run https://github.com/pedrobtz/py-zur/actions/runs/45343819148) gives
@@ -1035,7 +1069,8 @@ Tests run against the installed tool and compare against known answers:
 - **Build checks:** every `DT_NEEDED` (or Mach-O load command) resolves
   inside the wheel or to an allowed system library; no symlinks;
   `RECORD` hashes match; wheel at or under its size budget, and a
-  synthetic wheel one byte over fails.
+  synthetic wheel one byte over fails; no ELF file holds a run of
+  zero bytes longer than 64 KiB (patchelf padding, §6.3).
 - **Containers:** the Linux tests run in Ubuntu 24.04, Debian 12 and
   Rocky Linux 8 images, and in two minimal ones: `debian:12-slim`
   (no fonts or CA bundle; its `tzdata` is deleted before the tests) and
