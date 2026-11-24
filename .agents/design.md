@@ -573,7 +573,10 @@ when it can. The setting lasts for that R session only, so each
 `Rscript` call that installs packages repeats it, or the user sets
 `repos` in their own `.Rprofile`. On a distribution P3M has no binaries
 for, pak compiles from source and needs the toolchain `zur doctor`
-lists.
+lists. The same holds for a package P3M has not built for the running
+distribution: its Debian 12 index lacks `data.table`, `RcppArmadillo`
+and `xml2` (§18.2), so there the recipe compiles `data.table` from
+source. Debian 13 has them.
 
 ## 7. macOS: CRAN's binaries, unmodified
 
@@ -734,7 +737,7 @@ For each end point:
   `setup-r-dependencies@v2` for the same package, with no cache for
   cold.
 
-One more cold case runs in a `debian:12-slim` container that has uv
+One more cold case runs in a `debian:13-slim` container that has uv
 but no Python, where uv first downloads an interpreter for the
 launcher: the honest cost on a bare image.
 
@@ -762,8 +765,8 @@ Tests run against the installed tool and compare against known answers:
   same home used from Ubuntu and Rocky containers gives two libraries;
   a package in it still loads after `uv tool install --reinstall`; with
   a read-only home R starts and exits 0.
-- **`pak` recipe (§6.6):** in the Ubuntu, Debian and Rocky containers
-  `pak` installs, the recipe's `pkg_install("data.table")` after
+- **`pak` recipe (§6.6):** in the Ubuntu 24.04, Debian 13 and Rocky
+  Linux 8 containers `pak` installs, the recipe's `pkg_install("data.table")` after
   `repo_add(CRAN = "PPM@latest")` downloads a binary (no compiler is
   run) and the package loads; `getOption("repos")` is `@CRAN@` before
   and after (D9).
@@ -816,7 +819,8 @@ Tests run against the installed tool and compare against known answers:
 - **Containers:** the Linux tests run in Ubuntu 24.04, Debian 12 and
   Rocky Linux 8 images, and in two minimal ones: `debian:12-slim`
   (no fonts or CA bundle; its `tzdata` is deleted before the tests) and
-  `rockylinux:8-minimal` (no `which`).
+  `rockylinux:8-minimal` (no `which`). The `pak` recipe runs in Debian
+  13 instead of Debian 12, where P3M's coverage is partial (§18.2).
 
 ## 14. Licensing
 
@@ -1139,3 +1143,6 @@ compiler in the container:
   or `xml2`. Its `4.5-bookworm` index has had no `data.table` since at
   least 2026-10-01; the 2026-06-01 snapshot had 1.18.4. Trixie's
   `4.6` index has `data.table`.
+- On 2026-11-24 `4.6-trixie` held 25,538 packages, with `data.table`,
+  `RcppArmadillo` and `xml2`; the pak job and the benchmark's slim case
+  use Debian 13.

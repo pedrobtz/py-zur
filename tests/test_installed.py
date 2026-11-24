@@ -236,6 +236,7 @@ PLATFORMS = {
     "ubuntu:24.04": r"ubuntu-24\.04",
     "debian:12": r"debian-12",
     "debian:12-slim": r"debian-12",
+    "debian:13": r"debian-13",
     "rockylinux:8": r"rocky-8\.\d+",
     "rockylinux:8-minimal": r"rocky-8\.\d+",
 }

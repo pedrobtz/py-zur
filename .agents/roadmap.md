@@ -532,7 +532,7 @@ containers), [§15 D13](design.md#15-decisions).
 
 > Design gap: §6.4 takes the CA bundle from the system, and
 > `debian:12-slim` has none, so HTTPS (and with it the `pak` recipe of
-> §6.6 and the benchmark's `debian:12-slim` case of §12) fails there
+> §6.6 and the benchmark's `debian:13-slim` case of §12) fails there
 > until `ca-certificates` is installed. The design does not say whether
 > `zur doctor` should report a missing bundle. This roadmap installs
 > `ca-certificates` wherever a minimal image needs HTTPS and leaves
@@ -624,7 +624,7 @@ distribution, unless the user chose another (D10).
 zur-built R, and the binary packages CI users install load and give
 known answers.
 
-**Confirm first.** In `ubuntu:24.04`, `debian:12` and `rockylinux:8`
+**Confirm first.** In `ubuntu:24.04`, `debian:13` and `rockylinux:8`
 containers with no compiler on `PATH` (and with `libgomp1`/`libgfortran5`,
 or `libgomp`/`libgfortran`, installed by the job, since `zur doctor`
 comes later), the commands of §6.6 (`PAK_RECIPE`) install `pak`, and
@@ -645,7 +645,7 @@ confirmation, without `repo_add()`, built `data.table` from source.
 - The result recorded in §18.
 
 **Tests.**
-- `pak` recipe (§13), in Ubuntu 24.04 and Rocky Linux 8: `pak` installs,
+- `pak` recipe (§13), in Ubuntu 24.04, Debian 13 and Rocky Linux 8: `pak` installs,
   `pak::pkg_install("data.table")` succeeds with no compiler present,
   and `data.table::data.table(a = 1:3)[, sum(a)]` is `6`.
 - Binary packages (§13), on Ubuntu 24.04: each package of the set
@@ -664,6 +664,10 @@ confirmation, without `repo_add()`, built `data.table` from source.
   depend on the answer.
 - Every **Tests.** line exists and was seen to fail.
 - Quick profile green.
+
+> Note 2026-11-24: `debian:12` is not in the pak job. P3M's bookworm
+> index lacks `data.table` (§18.2), so the recipe compiles from source
+> there. Debian 12 stays in the stage 6 matrix.
 
 **Design.** [§6.6](design.md#66-packages-pak-is-the-documented-route),
 [§15 D9, D16, D17](design.md#15-decisions), [§16](design.md#16-open-questions) question 1.
@@ -995,7 +999,7 @@ and the Linux release gate is a script, not a judgement.
   restored by `actions/cache`) and the baseline
   (`r-lib/actions/setup-r@v2` with the same `r-version`, then
   `setup-r-dependencies@v2` for `data.table`, no cache for cold); the
-  extra cold case in `debian:12-slim` with uv and no Python. Each case
+  extra cold case in `debian:13-slim` with uv and no Python. Each case
   at least five times; medians in a JSON artifact and the job summary.
 - The runner matrix lists `ubuntu-latest`, `ubuntu-24.04-arm`,
   `macos-latest` and `windows-latest`; only `ubuntu-latest` is enabled
@@ -1022,12 +1026,13 @@ anti-goals in [§2](design.md#2-goals-non-goals-anti-goals).
 
 > Note 2026-11-24 (stage 8, new D9): the cold and warm cases run the
 > §6.6 recipe as restated, with `pak::repo_add(CRAN = "PPM@latest")`
-> before `pkg_install()`; the baseline is unchanged. The `debian:12-slim`
-> case relies on P3M's bookworm binaries.
+> before `pkg_install()`; the baseline is unchanged. The slim case runs
+> in `debian:13-slim`, because P3M's bookworm index lacks `data.table`
+> (§18.2).
 
 > Readings used: §12 gates "on Linux", which this roadmap applies to
 > each Linux wheel before it is uploaded to PyPI, so stage 20 runs the
-> gate on `ubuntu-24.04-arm`. The `debian:12-slim` case needs
+> gate on `ubuntu-24.04-arm`. The `debian:13-slim` case needs
 > `ca-certificates` for R's HTTPS (see stage 6); its install is inside
 > the timed region, as the honest cost on a bare image.
 
@@ -1073,6 +1078,8 @@ tests prove.
 > P3M has no binaries for pak compiles from source. No
 > `install.packages()` line for P3M is documented unless a test covers
 > it.
+> The README also gets §6.6's Debian 12 sentence; `PAK_RECIPE` is the
+> same on every distribution (2026-11-24).
 
 ## Stage 18 — Review
 
