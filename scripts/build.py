@@ -19,7 +19,7 @@ as built, for tests/test_prefix.py):
 5. prune     what a headless R does not use (design §9, D6, D19)
 6. scrub     build-prefix strings compiled into ELF files
 7. dedupe    symlinks, which wheels cannot hold
-8. pack      the copy and the launcher into a wheel, checked against
+8. pack      the copy, the launcher and zur doctor into a wheel, checked against
              --max-size (PyPI's per-file limit by default, design §10);
              --size-report prints its size by part
 
@@ -677,11 +677,18 @@ def _record(data):
     return "sha256=" + digest.rstrip(b"=").decode()
 
 
+# The modules of src/zur besides the launcher, copied into the wheel.
+MODULES = ["doctor.py"]
+
+
 def pack(stage, out, version, tag):
     package = stage / "zur"
     launcher = (REPO / "src/zur/__init__.py").read_text()
     launcher = _replace_once(launcher, '"0+unknown"', json.dumps(version), "launcher")
     (package / "__init__.py").write_text(launcher)
+    # The rest of the package as it is: zur doctor (design §6.5).
+    for module in MODULES:
+        shutil.copyfile(REPO / "src/zur" / module, package / module)
 
     dist_info = stage / f"zur-{version}.dist-info"
     dist_info.mkdir()
@@ -702,7 +709,7 @@ def pack(stage, out, version, tag):
         f"Tag: py3-none-{tag}\n"
     )
     (dist_info / "entry_points.txt").write_text(
-        "[console_scripts]\nR = zur:R\nRscript = zur:Rscript\n"
+        "[console_scripts]\nR = zur:R\nRscript = zur:Rscript\nzur = zur:main\n"
     )
 
     out.mkdir(parents=True, exist_ok=True)

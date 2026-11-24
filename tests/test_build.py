@@ -127,6 +127,19 @@ def test_version_placeholder_is_replaced(members):
     assert "0+unknown" not in data.decode()
 
 
+def test_entry_points_are_r_rscript_and_zur(members):
+    # Design §5: uv links exactly these into its tool bin directory.
+    _, data = members[f"zur-{R_VERSION}.dist-info/entry_points.txt"]
+    assert data.decode() == (
+        "[console_scripts]\nR = zur:R\nRscript = zur:Rscript\nzur = zur:main\n"
+    )
+
+
+def test_doctor_module_is_the_source_trees(members):
+    _, data = members["zur/doctor.py"]
+    assert data == (REPO / "src/zur/doctor.py").read_bytes()
+
+
 def test_scan_reads_the_wheel(elfs):
     # Without this, the checks below would pass on a scan that read
     # nothing: libR.so needs R's BLAS and the C library.

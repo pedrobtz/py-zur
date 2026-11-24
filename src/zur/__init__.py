@@ -4,7 +4,9 @@ The wheel carries a relocatable R installation under ``_runtime``. The
 ``R`` and ``Rscript`` console scripts replace the Python process with
 R's own front-end. Everything else R needs from the environment is set
 by R's own files (``bin/R``, ``etc/Renviron``), so R behaves the same
-however it is started (design §5, D13).
+however it is started (design §5, D13). The ``zur`` console script
+runs ``zur doctor`` (design §6.5), imported only then, so ``R`` and
+``Rscript`` pay nothing for it.
 """
 
 import os
@@ -40,3 +42,9 @@ def R():
 
 def Rscript():
     _exec("Rscript")
+
+
+def main():
+    from zur import doctor
+
+    sys.exit(doctor.main())
