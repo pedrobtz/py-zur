@@ -1110,6 +1110,38 @@ library whose exact source cannot be identified is listed as such in
 `BUILD-INFO.json`, not left out silently. The README and
 `BUILD-INFO.json` point to the release.
 
+Decided 2026-11-24 (stage 14), the mirror:
+
+- **The release is `v<version>`**, the wheel's version, `.postN`
+  included, so a rebuild has a release of its own (roadmap stage 14).
+  `BUILD-INFO.json`'s `source_release` is its URL,
+  `https://github.com/pedrobtz/py-zur/releases/tag/v<version>`, written
+  by the build; `scripts/sources.py tag` refuses wheels that disagree.
+  A draft has another URL until it is published (stage 15).
+- **Its assets come from the wheels' `BUILD-INFO.json`**, not from the
+  manifests: R's tarball and every dependency's `source`, each named by
+  its URL's last segment, so entries of one source RPM share an asset
+  (gcc's, for libgfortran and libquadmath). A dependency with `source:
+  null` has no asset; its entry says why. `SHA256SUMS`, in `sha256sum`'s
+  format, lists every asset. One reason: the same input serves the
+  macOS and Windows wheels, whose sources no manifest names yet.
+- **A draft's assets are replaced on every run; a published release
+  only gains assets** (a later platform's) and a merged `SHA256SUMS`, in
+  which a name with another SHA-256 is refused. After uploading, the job
+  downloads the release and checks every asset against `SHA256SUMS` and
+  every wheel's sources against both.
+- **The source RPMs are taken from `vault.almalinux.org/8.10`**, the
+  URLs the manifest pins (stage 13); if AlmaLinux moves them, those URLs
+  change, and the release still holds the copies.
+- **Size and time**, Linux x86_64 4.6.2: 26 assets (R's tarball, 3
+  library tarballs, 22 source RPMs), 265,877,705 bytes; on
+  `ubuntu-latest` the downloads took 6 s, the upload 7 s and the
+  download for the check about 3 s
+  ([run](https://github.com/pedrobtz/py-zur/actions/runs/45382301701),
+  whose upload was deliberately broken).
+- The repository's own files (build scripts, launcher) are not assets:
+  a published release's tag gives GitHub's source archives of them.
+
 The repository's own `LICENSE` is the GNU GPL version 2 text as the FSF
 publishes it now (`gnu.org/licenses/old-licenses/gpl-2.0.txt`), the
 licence of zur's own code, whose term the wheel's `License-Expression`
@@ -1181,7 +1213,9 @@ the system profile `library/base/R/Rprofile` (§6.4).
   POSIX, not in the launcher (§5). An inherited `RHOME` or `R_HOME` is
   always overridden, never honoured (2026-11-24).
 - **D14. Cairo without pango** on Linux (§6.2).
-- **D15. zur mirrors corresponding source** per version (§14).
+- **D15. zur mirrors corresponding source** per version (§14), on the
+  release `v<version>`, filled from the wheels' `BUILD-INFO.json` by
+  `scripts/sources.py` and `sources.yml` (2026-11-24, stage 14).
 - **D16. Reference BLAS and LAPACK on Linux**, also under
   `libblas.so.3` and `liblapack.so.3` (§6.2, §6.3), and as
   `libflexiblas.so.3` (a shim onto R's two libraries) for P3M's RHEL 9

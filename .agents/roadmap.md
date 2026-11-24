@@ -30,7 +30,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 11 | [zur doctor](#stage-11--zur-doctor) | quick | [#12](https://github.com/pedrobtz/py-zur/issues/12) | [#37](https://github.com/pedrobtz/py-zur/pull/37) | 2026-11-24 |
 | 12 | [First-run warning](#stage-12--first-run-warning) | quick | [#13](https://github.com/pedrobtz/py-zur/issues/13) | [#39](https://github.com/pedrobtz/py-zur/pull/39) | 2026-11-24 |
 | 13 | [Licences and build info](#stage-13--licences-and-build-info) | quick | [#14](https://github.com/pedrobtz/py-zur/issues/14) | [#40](https://github.com/pedrobtz/py-zur/pull/40) | 2026-11-24 |
-| 14 | [Source mirror](#stage-14--source-mirror) | quick | [#15](https://github.com/pedrobtz/py-zur/issues/15) | | |
+| 14 | [Source mirror](#stage-14--source-mirror) | quick | [#15](https://github.com/pedrobtz/py-zur/issues/15) | [#41](https://github.com/pedrobtz/py-zur/pull/41) | 2026-11-24 |
 | 15 | [Versioning and release pipeline](#stage-15--versioning-and-release-pipeline) | full | [#16](https://github.com/pedrobtz/py-zur/issues/16) | | |
 | 16 | [Benchmark and release gate](#stage-16--benchmark-and-release-gate) | quick | [#17](https://github.com/pedrobtz/py-zur/issues/17) | | |
 | 17 | [README and wheel metadata](#stage-17--readme-and-wheel-metadata) | quick | [#18](https://github.com/pedrobtz/py-zur/issues/18) | | |
@@ -97,8 +97,10 @@ Documentation-only pull requests (`*.md`, `.agents/`) skip the build,
 except `README.md` from stage 17 on, because the wheel's long
 description is read from it.
 
-Two workflows sit outside the profiles: `release.yml` (stage 15) and
-`benchmark.yml` (stage 16), each run by tag or dispatch.
+Three workflows sit outside the profiles: `sources.yml` (stage 14),
+`release.yml` (stage 15) and `benchmark.yml` (stage 16), each run by
+tag, dispatch or another workflow; `build.yml`'s dispatch input
+`sources` runs `sources.yml` on its own wheels (stage 14, 2026-11-24).
 
 **Where things are verified.** The maintainer's machine is macOS x86_64
 without Docker. Linux builds and every container test run only in GitHub
@@ -1132,6 +1134,24 @@ the wheels bundle is on a GitHub release of this repository (D15).
 > `image` entry's `srpm` (`BUILD-INFO.json`'s `source` with `kind`
 > `srpm`), the transitive ones included. `BUILD-INFO.json`'s
 > `source_release` (null until then) is the field to fill.
+
+**Deviations.** 2026-11-24:
+- `scripts/sources.py` reads the wheels' `BUILD-INFO.json`, not the
+  manifests: it repeats them (§11), and serves the macOS and Windows
+  wheels too (design §14). Its subcommands are `tag`, `collect` and
+  `verify`.
+- The job is a workflow of its own, `sources.yml` (dispatch with a
+  build run's ID, or called by another workflow), which `build.yml`
+  calls on dispatch with `sources`: a new workflow can be dispatched
+  only once it is on `main`, and stage 15's `release.yml` calls it.
+  "CI profiles" lists it.
+- `source_release` is written by the build as the release's tag URL;
+  a draft's own URL differs until stage 15 publishes it.
+- Tests added beyond **Tests.**: in `tests/test_unit.py` the committed
+  manifest's 26 assets, a missing source, an asset name GitHub would
+  change, two sources under one name, the merge with a release's
+  `SHA256SUMS`, the tag check and `source_release`; in
+  `tests/test_build.py` the wheel's `source_release`.
 
 ## Stage 15 — Versioning and release pipeline
 
