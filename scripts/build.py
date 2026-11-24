@@ -657,6 +657,9 @@ LICENSES = "licenses"  # under zur/_runtime, and under the .dist-info
 # R's own licence text in R_HOME, and zur's (the repository's LICENSE).
 R_COPYING = "lib/R/doc/COPYING"
 ZUR_LICENSE = "GPL-2.0-or-later"
+# The GitHub release holding the version's corresponding source (design
+# §14, D15); scripts/sources.py uploads it and refuses another URL.
+SOURCE_RELEASE = "https://github.com/pedrobtz/py-zur/releases/tag/v{version}"
 FONT_ENTRY = "liberation-sans-fonts"
 
 
@@ -725,8 +728,8 @@ def finish_build_info(runtime, version, files):
     Each dependency gets ``files`` (the wheel paths it bundles: its grafts,
     or the font's faces); the top level gets zur's version and licence,
     the licence expression, where the licence texts are, and
-    ``source_release``, the release holding the corresponding source,
-    which stage 14 fills (design §14).
+    ``source_release``, the release holding the corresponding source
+    (design §14; scripts/sources.py mirrors it).
     """
     path = runtime / "BUILD-INFO.json"
     info = json.loads(path.read_text())
@@ -737,7 +740,7 @@ def finish_build_info(runtime, version, files):
     info["zur"] = {"version": version, "license": ZUR_LICENSE}
     info["license_expression"] = license_expression(info)
     info["licenses"] = f"zur/_runtime/{LICENSES}"
-    info["source_release"] = None
+    info["source_release"] = SOURCE_RELEASE.format(version=version)
     path.write_text(json.dumps(info, indent=2) + "\n")
     return info
 

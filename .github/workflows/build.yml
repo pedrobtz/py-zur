@@ -21,6 +21,10 @@ name: build
 # (roadmap stage 9): the build installs pango-devel (ZUR_MEASURE_PANGO=1),
 # its prefix test only confirms pango is in use, its wheel is uploaded as
 # wheel-linux-x86_64-pango, and no job tests it.
+#
+# The dispatch input `sources` runs sources.yml on this run's wheels once
+# the build checks pass: the source mirror of design §14 (roadmap stage
+# 14), a draft GitHub release. No push, pull request or schedule runs it.
 
 on:
   push:
@@ -34,6 +38,10 @@ on:
     inputs:
       pango:
         description: "Measurement only: build with pango-devel (D14), test nothing"
+        type: boolean
+        default: false
+      sources:
+        description: "Also mirror the sources to the draft release v<version> (sources.yml)"
         type: boolean
         default: false
 
@@ -446,6 +454,15 @@ jobs:
           dnf install -y flexiblas 'libflexiblas.so.3()(64bit)'
           rpm -qf /usr/lib64/libflexiblas.so.3
           ZUR_PAK=1 ZUR_FLEXIBLAS=present uv run pytest -v tests/test_installed.py -k flexiblas
+
+  # The source mirror, on dispatch with `sources` only (see the top).
+  sources:
+    needs: [build-linux-x86_64, check-linux-x86_64]
+    if: inputs.sources && !inputs.pango
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/sources.yml
 
   # Full profile. Every job here has `needs: profile` and
   # `if: needs.profile.outputs.full == 'true'`. The other platforms' legs

@@ -1,0 +1,120 @@
+name: sources
+
+# The source mirror (design §14, D15; roadmap stage 14): the corresponding
+# source of every wheel of one zur version, on the GitHub release
+# v<version> of this repository. scripts/sources.py reads the wheels'
+# BUILD-INFO.json, downloads R's tarball and every dependency's source
+# (tarball or AlmaLinux source RPM), each checked by SHA-256, and writes
+# SHA256SUMS; the job uploads them, downloads the release again and
+# checks it against SHA256SUMS and the wheels.
+#
+# The release is created as a draft, which is not public and has no tag
+# until it is published (stage 15's release.yml publishes it). A draft's
+# assets are replaced on every run; a published release only gains the
+# assets it lacks (a later platform's), and its SHA256SUMS is merged.
+#
+# Runs outside the profiles (roadmap "CI profiles"): by dispatch, with the
+# ID of a build run whose wheel-* artifacts to mirror, and from another
+# workflow (build.yml's dispatch input `sources`, release.yml), on that
+# run's own artifacts.
+
+on:
+  workflow_call:
+    inputs:
+      run-id:
+        description: "Build run whose wheel-* artifacts to mirror (default: this run)"
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: "ID of a build run whose wheel-* artifacts to mirror"
+        type: string
+        required: true
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the release
+      actions: read # another run's artifacts
+    # One writer per release at a time; never cancel one half-way.
+    concurrency:
+      group: sources-mirror
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash # -eo pipefail, so a failure before `| tee` fails the step
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          run-id: ${{ inputs.run-id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: The wheels and their release
+        run: |
+          # The D14 measurement wheel is never published (roadmap stage 9).
+          rm -rf dist/*-pango
+          ls dist/*/*.whl
+          tag=$(uv run scripts/sources.py tag dist/*/*.whl --repo "$GH_REPO")
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "Release: $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Find or create the draft release
+        run: |
+          gh release list --limit 1000 --json tagName,isDraft \
+            --jq "[.[] | select(.tagName == \"$TAG\")]" > found.json
+          case $(jq length found.json) in
+            0)
+              gh release create "$TAG" --draft --target "$GITHUB_SHA" \
+                --title "zur ${TAG#v}" \
+                --notes "Corresponding source of the zur ${TAG#v} wheels (design §14, D15): R's tarball and the source of every library they bundle, each named in a wheel's zur/_runtime/BUILD-INFO.json. SHA256SUMS lists them."
+              draft=true
+              ;;
+            1) draft=$(jq '.[0].isDraft' found.json) ;;
+            *) echo "more than one release named $TAG"; exit 1 ;;
+          esac
+          echo "DRAFT=$draft" >> "$GITHUB_ENV"
+          gh release view "$TAG" --json url,isDraft --jq '"\(.url) draft=\(.isDraft)"' \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Collect the sources
+        run: |
+          gh release view "$TAG" --json assets --jq '.assets[].name' > present.txt
+          merge=()
+          if grep -qx SHA256SUMS present.txt; then
+            gh release download "$TAG" -p SHA256SUMS -D existing
+            merge=(--merge existing/SHA256SUMS)
+          fi
+          start=$(date +%s)
+          uv run scripts/sources.py collect mirror dist/*/*.whl "${merge[@]}"
+          echo "Collect: $(du -sb mirror | cut -f1) bytes, $(ls mirror | wc -l) files," \
+            "$(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload to the release
+        run: |
+          start=$(date +%s)
+          if [ "$DRAFT" = true ]; then
+            gh release upload "$TAG" mirror/* --clobber
+          else
+            # A published release keeps the files people fetched.
+            for f in mirror/*; do
+              n=$(basename "$f")
+              [ "$n" = SHA256SUMS ] || grep -qx "$n" present.txt || gh release upload "$TAG" "$f"
+            done
+            gh release upload "$TAG" mirror/SHA256SUMS --clobber
+          fi
+          echo "Upload: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Roadmap stage 14: every SHA256SUMS line matches the asset uploaded,
+      # and every source in the wheels' BUILD-INFO.json is among them.
+      - name: Verify the release
+        run: |
+          start=$(date +%s)
+          gh release download "$TAG" -D release
+          uv run scripts/sources.py verify release dist/*/*.whl \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Verify: $(du -sb release | cut -f1) bytes downloaded," \
+            "$(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
