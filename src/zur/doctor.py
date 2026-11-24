@@ -133,7 +133,7 @@ def missing_tools(which=shutil.which):
 def package_manager(fam, which=shutil.which):
     """The family's first package manager on PATH, else its first."""
     managers = FAMILIES[fam]["managers"]
-    return managers[0]  # TEMPORARY break (#38)
+    return next((m for m in managers if which(m) is not None), managers[0])
 
 
 def install_command(fam, names, root=None, manager=None):
@@ -257,7 +257,7 @@ def format_report(report):
 def first_run_note(report):
     """The launcher's first-run note (design §6.5), or ``""``."""
     if not report.runtimes:
-        return "zur: TEMPORARY break, nothing is missing\n"
+        return ""
     out = [
         "zur: binary R packages need libraries this machine lacks: "
         + ", ".join(report.runtimes)

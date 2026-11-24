@@ -350,7 +350,6 @@ RSCRIPT = """\
 RHOME="$(CDPATH= cd -- "$(dirname -- "$0")/{home}" && pwd -P)"
 export RHOME
 unset R_HOME
-echo "zur: TEMPORARY break, a note from bin/Rscript" >&2
 exec "${{RHOME}}/libexec/Rscript" "$@"
 """
 
