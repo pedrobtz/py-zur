@@ -165,10 +165,10 @@ unset zur_ca
 ## is left out, and a value outside the characters the specification
 ## allows counts as missing. The directory is created when possible;
 ## with a read-only home R starts without it.
-if test -n "${HOME}"; then  # TEMPORARY (#8): the user's value ignored
+if test -z "${R_LIBS_USER}" && test -n "${HOME}"; then
   zur_id=linux
   zur_version_id=
-  if false && test -r /etc/os-release; then  # TEMPORARY (#8)
+  if test -r /etc/os-release; then
     while IFS='=' read -r zur_key zur_value || test -n "${zur_key}"; do
       zur_value=${zur_value#[\\"\\']}
       zur_value=${zur_value%[\\"\\']}
@@ -183,7 +183,7 @@ if test -n "${HOME}"; then  # TEMPORARY (#8): the user's value ignored
   fi
   R_LIBS_USER="${HOME%/}/R/zur/@ARCH@-${zur_id}${zur_version_id}/@R_MINOR@"
   export R_LIBS_USER
-  test -d "${R_LIBS_USER}" || mkdir -p "${R_LIBS_USER}" 2>/dev/null || exit 1  # TEMPORARY (#8)
+  test -d "${R_LIBS_USER}" || mkdir -p "${R_LIBS_USER}" 2>/dev/null || :
   unset zur_id zur_version_id zur_key zur_value
 fi
 """
