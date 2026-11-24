@@ -298,7 +298,17 @@ jobs:
         run: |
           uv tool install dist/zur-*.whl
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+      # TEMPORARY (stage 8 seen-to-fail): a system BLAS in place of R's.
+      - name: Replace R's BLAS names with the system's
+        if: matrix.image == 'ubuntu:24.04'
+        run: |
+          apt-get install -y --no-install-recommends libblas3 liblapack3
+          lib=$(Rscript -e 'cat(R.home("lib"))')
+          rm "$lib/libblas.so.3" "$lib/liblapack.so.3"
       - name: pak recipe and binary packages
+        env: # TEMPORARY (stage 8 seen-to-fail)
+          OMP_THREAD_LIMIT: "1"
+          PKG_SYSREQS: "false"
         # Also R's start, CA bundle, HTTPS and user library, since
         # debian:13 is in no other job.
         run: |

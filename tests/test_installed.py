@@ -483,29 +483,29 @@ BINARY_SET = {
     # libR.so only.
     "jsonlite": (
         'cat(jsonlite::toJSON(list(a = 1:3, b = "x"), auto_unbox = TRUE))',
-        '{"a":[1,2,3],"b":"x"}',
+        '{"a":[1,2,3],"b":"y"}',  # TEMPORARY
     ),
     # libstdc++.so.6. The header's version string, compiled in, against
     # the DESCRIPTION's.
     "Rcpp": (
         "cat(as.character(Rcpp::getRcppVersion()) =="
         ' packageDescription("Rcpp")$Version)',
-        "TRUE",
+        "FALSE",  # TEMPORARY
     ),
     # libgfortran.so.5, libblas.so.3: dy/dt = -y from 1, at t = 1, is exp(-1).
     "deSolve": (
         "y <- deSolve::ode(1, c(0, 1), function(t, y, p) list(-y), NULL,"
         " rtol = 1e-10, atol = 1e-12)[2, 2];"
-        " cat(abs(y - exp(-1)) < 1e-8)",
+        " cat(abs(y - exp(-2)) < 1e-8)",  # TEMPORARY
         "TRUE",
     ),
     # libgomp.so.1.
-    "data.table": ("cat(data.table::data.table(a = 1:3)[, sum(a)])", "6"),
+    "data.table": ("cat(data.table::data.table(a = 1:3)[, sum(a)])", "7"),  # TEMPORARY
     # libblas.so.3, liblapack.so.3 (and libgomp.so.1). Least squares on an
     # exact line, against base R's own QR.
     "RcppArmadillo": (
         "x <- cbind(1, 1:10); y <- 1 + 2 * (1:10);"
-        " b <- RcppArmadillo::fastLmPure(x, y)$coefficients;"
+        " b <- RcppArmadillo::fastLmPure(x, y)$coefficients + 1e-9;"  # TEMPORARY
         " cat(max(abs(b - c(1, 2))) < 1e-10,"
         " max(abs(b - qr.coef(qr(x), y))) < 1e-10)",
         "TRUE TRUE",
