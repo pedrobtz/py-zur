@@ -527,7 +527,7 @@ MAKECONF = """\
 # configure  '--prefix=/opt/zur' 'CPPFLAGS=-I/opt/zur-deps/include' \
 'LDFLAGS=-L/opt/zur-deps/lib'
 R_HOME=/opt/zur/lib/R
-CC = gcc -std=gnu2x
+CC = gcc -std=gnu23
 CPPFLAGS = -I/opt/zur-deps/include
 CXX = /opt/rh/gcc-toolset-14/root/usr/bin/g++ -std=gnu++20
 FC = gfortran
@@ -547,7 +547,7 @@ def test_makeconf_relocated(tmp_path):
     text = path.read_text()
     assert "/opt/zur" not in text
     assert "\nR_HOME=" not in text
-    assert "\nCC = gcc -std=gnu2x\n" in text
+    assert "\nCC = gcc\n" in text
     assert "\nCXX = g++ -std=gnu++20\n" in text
     assert "\nCPPFLAGS =\n" in text and "\nLDFLAGS =\n" in text
     for lang in ["C", "CXX", "F"]:

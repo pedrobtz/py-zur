@@ -206,6 +206,11 @@ def relocate_makeconf(path, prefix, deps):
     text = re.sub(
         r"^(\w+ = )/\S*/(gcc|g\+\+|gfortran|cpp)(?=\s|$)", r"\1\2", text, flags=re.M
     )
+    # CC is plain gcc, without the C standard configure chose: gcc-toolset-14
+    # takes -std=gnu23, which no host gcc before 14 accepts (Rocky Linux 8
+    # has gcc 8, Ubuntu 24.04 gcc 13). Packages compile in the host's
+    # default C standard; Rconfig.h decides per compiler (relocate_rconfig).
+    text = re.sub(r"^(CC = gcc) -std=\S+$", r"\1", text, flags=re.M)
     # D17: R is built without OpenMP; packages use the host's. (Fortran
     # has one variable, FFLAGS, for fixed and free form.)
     for lang in ["C", "CXX", "F"]:
