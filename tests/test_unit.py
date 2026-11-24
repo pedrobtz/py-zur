@@ -956,6 +956,61 @@ def test_graft_name_is_hashed_like_auditwheel():
         build.graft_name("libz.a", data)
 
 
+def elf_with_loads(loads):
+    """An ELF64 header and program headers: (p_type, p_offset, p_vaddr, p_align)."""
+    header = b"\x7fELF\x02\x01\x01" + bytes(9)
+    header += struct.pack(
+        "<HHIQQQIHHHHHH", 3, 62, 1, 0, 64, 0, 0, 64, 56, len(loads), 64, 0, 0
+    )
+    phdrs = b"".join(
+        struct.pack("<IIQQQQQQ", t, 4, off, va, va, 0x100, 0x100, align)
+        for t, off, va, align in loads
+    )
+    return header + phdrs
+
+
+def load_aligns(data):
+    phnum = struct.unpack_from("<H", data, 0x38)[0]
+    return [struct.unpack_from("<Q", data, 64 + i * 56 + 48)[0] for i in range(phnum)]
+
+
+def test_lower_load_align_issue_43(tmp_path):
+    # Only PT_LOAD headers above the page size change (#43); PT_GNU_STACK
+    # (0x6474E551) keeps its alignment, and a 4 KiB one is left alone.
+    path = tmp_path / "lib.so"
+    loads = [
+        (1, 0, 0, 0x200000),
+        (1, 0x3000, 0x203000, 0x200000),
+        (1, 0x5000, 0x205000, 0x1000),
+        (0x6474E551, 0, 0, 0x10),
+    ]
+    data = elf_with_loads(loads)
+    path.write_bytes(data)
+    assert build.lower_load_align(path, 4096) == 2
+    new = path.read_bytes()
+    assert len(new) == len(data)
+    assert load_aligns(new) == [0x1000, 0x1000, 0x1000, 0x10]
+    assert build.lower_load_align(path, 4096) == 0
+    # 64 KiB pages (aarch64): only the 2 MiB headers come down, to 64 KiB.
+    path.write_bytes(elf_with_loads([(1, 0, 0, 0x200000), (1, 0, 0, 0x1000)]))
+    assert build.lower_load_align(path, 65536) == 1
+    assert load_aligns(path.read_bytes()) == [0x10000, 0x1000]
+
+
+def test_lower_load_align_refuses_incongruent_segments(tmp_path):
+    path = tmp_path / "lib.so"
+    path.write_bytes(elf_with_loads([(1, 0x1000, 0x200000, 0x200000)]))
+    with pytest.raises(SystemExit, match="not congruent"):
+        build.lower_load_align(path, 65536)
+    path.write_bytes(b"\x7fELF\x01\x01\x01" + bytes(57))
+    with pytest.raises(SystemExit, match="ELF64"):
+        build.lower_load_align(path, 4096)
+
+
+def test_page_size_per_architecture():
+    assert build.PAGE_SIZE == {"x86_64": 4096, "aarch64": 65536}
+
+
 def test_scrub_keeps_length_and_leaves_no_prefix(tmp_path):
     rscript = tmp_path / "zur/_runtime/lib/R/bin/Rscript"
     rscript.parent.mkdir(parents=True)
