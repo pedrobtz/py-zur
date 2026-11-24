@@ -19,7 +19,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | --- | --- | --- | --- | --- | --- |
 | 1 | [linux-64 wheel](#stage-1--linux-64-wheel) | quick | — | [#1](https://github.com/pedrobtz/py-zur/pull/1) | 2026-11-23 |
 | 2 | [Project identity and CI profiles](#stage-2--project-identity-and-ci-profiles) | quick | [#3](https://github.com/pedrobtz/py-zur/issues/3) | [#27](https://github.com/pedrobtz/py-zur/pull/27) | 2026-11-24 |
-| 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | [#4](https://github.com/pedrobtz/py-zur/issues/4) | | |
+| 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | [#4](https://github.com/pedrobtz/py-zur/issues/4) | [#28](https://github.com/pedrobtz/py-zur/pull/28) | 2026-11-24 |
 | 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | [#5](https://github.com/pedrobtz/py-zur/issues/5) | | |
 | 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | | |
 | 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | | |
