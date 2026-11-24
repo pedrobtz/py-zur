@@ -171,7 +171,7 @@ jobs:
         run: |
           docker exec zur uv run --frozen scripts/build.py \
             --prefix "$ZUR_PREFIX" --deps "$ZUR_DEPS" --out dist \
-            --size-report 2>&1 | tee build-wheel.log
+            --size-report --max-size 50000000 2>&1 | tee build-wheel.log
           wheel=$(ls dist/*.whl)
           echo "Wheel ($WHEEL_ARTIFACT): $(basename "$wheel"), $(stat -c %s "$wheel") bytes" \
             | tee -a "$GITHUB_STEP_SUMMARY"
