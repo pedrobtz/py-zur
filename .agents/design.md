@@ -919,3 +919,13 @@ ELF files installed, exactly five need `libgfortran.so.5` and
 (`cairo.so`). Run:
 https://github.com/pedrobtz/py-zur/actions/runs/45292200006.
 
+**Pinned dependencies (stage 4).** OpenSSL 3.5.9 and libcurl 8.23.0
+build in 124 to 219 s (five runs); a warm run restores them from the
+cache (8 MB) in about 1 s. With them, R reports libcurl 8.23.0 over
+OpenSSL/3.5.9, and the image's zlib 1.2.11, bzip2 1.0.6, xz 5.2.4,
+PCRE2 10.32, ICU 60.3, readline 7.0 and cairo 1.15.12. R's files link
+nothing outside `manifests/linux.toml` besides R's own libraries, the
+Fortran runtime and glibc; fontconfig reaches R only through cairo.
+The image sets `PKG_CONFIG_PATH=/usr/local/lib/pkgconfig`, which the
+build now overrides (§6.1). Green run:
+https://github.com/pedrobtz/py-zur/actions/runs/45301423657.
