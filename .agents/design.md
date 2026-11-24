@@ -922,7 +922,8 @@ not a decision.
      manylinux image. If not, the hashed graft of §6.2. Answered
      2026-11-24 (stage 3): no; the graft is taken (§18).
    - `pak` selects P3M binaries on a zur-built R (§6.6). If not, D9 is
-     reopened.
+     reopened. Answered 2026-11-24 (stage 8): no; pak compiles from
+     source, so D9 is reopened for the maintainer (§18.2).
    - macOS: §7 holds on arm64 and on a runner that never had a
      framework R. If not, the patcher that §7 replaced comes back as
      a new decision.
@@ -1082,3 +1083,32 @@ Fortran runtime and glibc; fontconfig reaches R only through cairo.
 The image sets `PKG_CONFIG_PATH=/usr/local/lib/pkgconfig`, which the
 build now overrides (§6.1). Green run:
 https://github.com/pedrobtz/py-zur/actions/runs/45301423657.
+
+### 18.2 Measurements, 2026-11-24 (stage 8)
+
+**`pak` on a zur-built R does not select P3M binaries.** The §6.6
+recipe (`tests/recipes.py`), run in `ubuntu:24.04` and `rockylinux:8`
+with no compiler and with `libgomp1`/`libgfortran5` (`libgomp`/
+`libgfortran`) installed, in job `pak-linux-x86_64` of
+https://github.com/pedrobtz/py-zur/actions/runs/45329772193:
+
+- `pak` 0.11.2 installs from its own repository
+  (`pak_0.11.2_R-4-6_x86_64-linux-gnu.tar.gz`).
+- `pak::pkg_install("data.table")` then reports `Got data.table
+  1.18.6.1 (source)` and `Building data.table 1.18.6.1`, and fails in
+  the build for want of a compiler, in both containers.
+- With `repos` as base R sets it (`CRAN = "@CRAN@"`), pak resolves CRAN
+  to `https://cran.rstudio.com` (pkgcache's and pkgdepends'
+  `default_cran_mirror()`), which serves source only: the URL pak used
+  was `https://cran.rstudio.com/src/contrib/data.table_1.18.6.1.tar.gz`.
+  R's user agent is the standard `R (4.6.2 x86_64-pc-linux-gnu x86_64
+  linux-gnu)`; pak never asks P3M, so the user agent plays no part.
+- pak detects the platform correctly (`x86_64-pc-linux-gnu-ubuntu-24.04`,
+  `x86_64-pc-linux-gnu-rocky-8.10`) and `pak::ppm_has_binaries()` is
+  `TRUE` in both. After `pak::repo_add(CRAN = "PPM@latest")`, CRAN
+  becomes `https://packagemanager.posit.co/cran/__linux__/noble/latest`
+  (Ubuntu) or `…/__linux__/centos8/latest` (Rocky), and `pkg_deps()`
+  gives data.table with the binary platform of the container. P3M
+  binaries are therefore reachable on a zur-built R, but only with a
+  `repos` setting, which D9 rules out.
+
