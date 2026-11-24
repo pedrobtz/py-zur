@@ -176,6 +176,44 @@ def test_no_runpath_outside_the_wheel(elfs):
     assert outside == {}
 
 
+# patchelf, given no --page-size, starts the segment it adds at the next
+# p_align boundary (2 MiB on x86_64) and fills the gap with zeros (#43).
+# A run longer than this in an ELF file is padding, not content.
+MAX_ZERO_RUN = 64 * 1024
+
+
+def longest_zero_run(data):
+    """The longest run of zero bytes longer than MAX_ZERO_RUN, or 0."""
+    needle = bytes(MAX_ZERO_RUN + 1)
+    longest = 0
+    start = data.find(needle)
+    while start >= 0:
+        end = start + len(needle)
+        while end < len(data) and data[end] == 0:
+            end += 1
+        longest = max(longest, end - start)
+        start = data.find(needle, end)
+    return longest
+
+
+def test_longest_zero_run_counts_bytes():
+    assert longest_zero_run(b"a" + b"\x00" * MAX_ZERO_RUN + b"a") == 0
+    assert longest_zero_run(b"a" + b"\x00" * (MAX_ZERO_RUN + 1) + b"a") == (
+        MAX_ZERO_RUN + 1
+    )
+    two = b"\x00" * (MAX_ZERO_RUN + 1) + b"a" + b"\x00" * (MAX_ZERO_RUN + 9)
+    assert longest_zero_run(two) == MAX_ZERO_RUN + 9
+
+
+def test_no_elf_file_is_padded_with_zeros_issue_43(members, elfs):
+    padded = {
+        name: run
+        for name in elfs
+        if (run := longest_zero_run(members[name][1])) > MAX_ZERO_RUN
+    }
+    assert padded == {}
+
+
 def test_auditwheel_show_reports_manylinux_2_28():
     result = subprocess.run(
         [sys.executable, "-m", "auditwheel", "show", "--json", str(WHEEL)],
