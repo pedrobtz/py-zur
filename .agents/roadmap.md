@@ -482,16 +482,27 @@ no `which`, and the environment it needs lives in R's own files.
 - The decision on [#7](https://github.com/pedrobtz/py-zur/issues/7)
   was implemented first: `bin/Rscript` and `lib/R/bin/Rscript` are shell
   scripts that set `RHOME` from their location and run the compiled
-  `bin/exec/Rscript`; `bin/R` and the launcher no longer set `RHOME`.
+  `libexec/Rscript` under `R_HOME`; `bin/R` and the launcher no longer
+  set `RHOME`. The decision named `bin/exec/Rscript`, but `R CMD
+  INSTALL` takes every file in `bin/exec` for a sub-architecture, so
+  the second decision on #7 moved it to `libexec` (design §5).
   The scripts also drop an inherited `R_HOME`, which the decision's
   test with `R_HOME=/nonexistent/R` needs: `bin/R` otherwise prints its
   warning about it on stdout (design §5).
-- `which`: configure's `WHICH` is the shell's `command -v`; `Sys.which`
-  of a name that is also a shell builtin returns `""` (design §6.4).
+- `which`: configure's `WHICH` is `trap 'exit 0' 0; command -v`
+  (decision on #7); `Sys.which` of a name that is also a shell builtin
+  returns `""` (design §6.4).
+- fontconfig 2.15.0 is built from pinned source (a scope change,
+  decided on #7): the image's 2.13.1 cannot read the relative font
+  directory a relocatable `fonts.conf` needs (design §6.1, §6.4).
+- `png()` and the other bitmap devices: R without pango defaults to
+  Xlib, so the build appends `options(bitmapType = "cairo")` to the
+  system `Rprofile` (decision on #7, design §6.4).
 - The font is a pinned "image" entry of `manifests/linux.toml`
   (`liberation-sans-fonts`, no sonames), not a fetched file.
-- The PDF check draws with `encoding = "CP1252"`: `pdf()`'s default
-  encoding has no euro sign, and the check requires empty stderr.
+- The PDF check draws with `encoding = "WinAnsi"` (CP1252): `pdf()`'s
+  default encoding has no euro sign, and the check requires empty
+  stderr.
 - The minimal images get only what the workflow needs (`tar` and `gzip`
   on Rocky, nothing on Debian before its CA bundle), so the source
   package and `strace` tests skip there and run in the other three.
@@ -500,7 +511,8 @@ no `which`, and the environment it needs lives in R's own files.
   name; `--with-internal-tzcode` in `Makeconf`'s configure call and the
   shipped zoneinfo; the font files and `fonts.conf` in the wheel; a
   user's `FONTCONFIG_FILE` wins; empty stderr from every graphics
-  device.
+  device; `bin/exec` holds only `R`; the grafted fontconfig is the
+  pinned version; `bitmapType` is `"cairo"` and a user's value wins.
 
 **Design.** [§6.4](design.md#64-runtime-files-a-headless-container-lacks),
 [§13](design.md#13-how-it-is-tested) (graphics, network and data,

@@ -198,10 +198,12 @@ zur-4.6.2.dist-info/
   front-end script the build already edits, which `Rscript`, `R CMD`
   and child R processes all pass through) and `etc/Renviron`, each
   only when the user has not set the variable. `bin/Rscript` is a shell
-  script too: the compiled `Rscript` is at `bin/exec/Rscript`, and the
-  script sets `RHOME` from its own location, overriding any inherited
+  script too: the compiled `Rscript` is at `$R_HOME/libexec/Rscript`, and
+  the script sets `RHOME` from its own location, overriding any inherited
   value, and runs it. So `$R_HOME/bin/Rscript` finds this R however it
-  is started, and nothing else sets `RHOME`. The script also drops an
+  is started, and nothing else sets `RHOME`. The compiled `Rscript` is
+  at `$R_HOME/libexec/Rscript`, not `bin/exec/`, because `R CMD INSTALL`
+  takes every file in `bin/exec` for a sub-architecture (2026-11-24). The script also drops an
   inherited `R_HOME`, as the launcher does, so `bin/R` prints no warning
   about it (2026-11-24, stage 6). Like `bin/R`, it does not follow a
   symlink to itself: a link to it elsewhere finds no R.
@@ -248,8 +250,13 @@ why the image's version is adequate or why it is built. Decided
   and §16 question 2 tracks them for rebuilds. OPENSSLDIR is
   `/etc/ssl`, and libcurl has no CA path compiled in: certificates come
   from the system through `bin/R` (§6.4).
+- **Built from source: fontconfig 2.15.0**, because the image's 2.13.1
+  lacks `<dir prefix="relative">`, which a relocatable `fonts.conf`
+  needs (§6.4); it parses local files only. Its SONAME stays
+  `libfontconfig.so.1`, so the image's cairo uses it (2026-11-24,
+  stage 6).
 - **From the image:** zlib, bzip2, xz, PCRE2, ICU, readline, cairo,
-  fontconfig, freetype, libpng, libjpeg-turbo and libtiff. Each meets
+  freetype, libpng, libjpeg-turbo and libtiff. Each meets
   R-admin's minimum version, and R uses each on local data only.
 - `dnf` installs exactly the pinned versions and the build refuses any
   other; every tarball, R's included, is verified before any is
@@ -429,17 +436,33 @@ Decided 2026-11-24 (stage 6):
   the cache in `$XDG_CACHE_HOME/fontconfig`, and appends Liberation
   Sans to every requested family, so a family the system has wins and
   any other falls back to it. It includes no system configuration: the
-  wheel's fontconfig is 2.13 and warns on a newer one's elements.
-  `bin/R` sets `FONTCONFIG_FILE` to it unless set.
-- **`Sys.which` runs the shell's `command -v`:** configure is given
-  `ac_cv_path_WHICH="command -v"`, which base R compiles in where it
-  would have put `/usr/bin/which`. `command -v` searches `PATH` as
-  `which` does; the one difference is a name that is also a shell
-  builtin (`echo`, `printf`, `test`, `kill`, `pwd`, `true`, `false`),
-  for which it prints the bare name, so `Sys.which` returns `""` there.
-  Rejected: patching base R's source (the modified R would need its
-  own notice and mirror, D15) and a `which` script in the wheel (base R
-  compiles in one fixed path, and the wheel's moves).
+  wheel's fontconfig is 2.15 (§6.1), and a system's configuration may be
+  older or newer. `bin/R` sets `FONTCONFIG_FILE` to it unless set. The
+  image's fontconfig 2.13.1 cannot read `prefix="relative"`, which is
+  why fontconfig is built (§6.1); writing a per-user configuration from
+  `bin/R` was rejected: it writes outside the tool directory and fails
+  with a read-only `HOME`.
+- **`WHICH` is `trap 'exit 0' 0; command -v`** (configure's cache
+  variable `ac_cv_path_WHICH`), which base R compiles in where it would
+  have put `/usr/bin/which`; `Sys.which` runs it through `/bin/sh -c`.
+  `command -v` searches `PATH` as `which` does. dash exits 127 when
+  `command -v` finds nothing, which `system(intern = TRUE)` turns into
+  an error; the exit trap makes the status 0, so `Sys.which` of a
+  missing name returns `""`. The value has no `$ : & "` or backslash,
+  so it passes unchanged through `Makefile`, `basepkg.mk`'s sed and the
+  R string literal. One difference from `which`: for a name that is also
+  a shell builtin (`echo`, `printf`, `test`, `kill`, `pwd`, `true`,
+  `false`), `command -v` prints the bare name, so `Sys.which` returns
+  `""` there. Rejected: patching base R's source (D15 would need a
+  notice) and a `which` script in the wheel (base R compiles in one
+  fixed path).
+- **Bitmap devices use cairo.** Without pango grDevices would default
+  `bitmapType` to `"Xlib"`, which a `--without-x` R cannot use; the build
+  appends `options(bitmapType = "cairo")` to the system profile
+  `library/base/R/Rprofile`, read even under `--vanilla`, so `png()`,
+  `jpeg()`, `tiff()` and `bmp()` use cairo. grDevices' `.onLoad` sets
+  only options not already set, so a user's later `options()` still
+  wins. Linux only.
 - **Time zones:** `--with-internal-tzcode` is in use (configure's call,
   recorded in `Makeconf`, has it, and `$R_HOME/share/zoneinfo` ships);
   `Europe/Zurich` converts in `debian:12-slim`, which has no `tzdata`.
@@ -540,7 +563,8 @@ source.
     when a framework R of the same version is installed.
 - **Edits are text only:** `bin/R` takes `R_HOME` from its own
   location and exports `DYLD_LIBRARY_PATH`; `bin/Rscript` becomes the
-  script of §5, with CRAN's binary moved to `bin/exec/Rscript`; `Renviron`
+  script of §5, with CRAN's binary moved to `Resources/libexec/Rscript`
+  (not `bin/exec/`, §5); `Renviron`
   loses the framework path; in `Makeconf` framework linking becomes
   `-L"$(R_HOME)/lib" -lR`, so source packages compile and link against
   the copy. A package built that way records `libR.dylib`'s own
@@ -783,6 +807,10 @@ publishes it now (`gnu.org/licenses/old-licenses/gpl-2.0.txt`), the
 licence the wheel metadata names; `tests/test_unit.py` pins its SHA-256.
 2026-11-24, stage 2: the build scripts and launcher are distributed in
 every wheel next to R, so they carry R's licence.
+2026-11-24, stage 6: zur's edits to R's installed files are text only:
+`bin/R` (§5, §6.4), `bin/Rscript` (a script in place of the binary,
+§5), and on Linux the line `options(bitmapType = "cairo")` appended to
+the system profile `library/base/R/Rprofile` (§6.4).
 
 ## 15. Decisions
 
