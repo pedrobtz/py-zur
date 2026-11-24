@@ -310,7 +310,7 @@ def licenses(entries, out, deps, owner=rpm_owner, fetcher=None):
         for e in entries:
             target = out / e["name"]
             target.mkdir(parents=True, exist_ok=True)
-            for f in e["license_files"][: max(1, len(e["license_files"]) - 1)]:
+            for f in e["license_files"]:
                 dest = target / license_name(f)
                 if e["origin"] == "source":
                     src = Path(deps) / "share/licenses" / e["name"] / f
