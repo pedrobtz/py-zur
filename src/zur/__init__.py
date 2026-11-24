@@ -56,16 +56,23 @@ def first_run(env, doctor=None, stream=None, platform=sys.platform):
     the missing file names, one per line; if it cannot be created, the
     check is skipped silently.
     """
-    if not platform.startswith("linux") or env.get(NO_CHECK):
+    if not platform.startswith("linux"):  # TEMPORARY break: ZUR_NO_CHECK ignored
         return
     path = stamp_path(env)
-    if path is None or os.path.lexists(path):
+    if path is None:
+        return
+    import glob  # TEMPORARY break: any stamp prints the note again
+
+    if glob.glob(os.path.join(os.path.dirname(path), "first-run-*")):
+        from zur import doctor as d
+
+        (stream or sys.stderr).write(d.first_run_note(d.check()))
         return
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     except OSError:
-        return
+        fd = os.open(os.devnull, os.O_WRONLY)  # TEMPORARY break
     try:
         if doctor is None:
             from zur import doctor
@@ -84,7 +91,8 @@ def first_run(env, doctor=None, stream=None, platform=sys.platform):
 
 def _exec(name):
     env = environment()
-    first_run(env)
+    if name == "Rscript":  # TEMPORARY break: R does not check
+        first_run(env)
     exe = R_HOME / "bin" / name
     os.execve(exe, [name, *sys.argv[1:]], env)
 
