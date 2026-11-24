@@ -553,9 +553,11 @@ R_HOME = "zur/_runtime/lib/R"
 PRUNE = [
     f"{R_HOME}/doc/manual",  # the manuals, HTML and PDF
     f"{R_HOME}/doc/*.pdf",  # NEWS.pdf
+    f"{R_HOME}/library/*/doc",  # vignettes
     f"{R_HOME}/library/*/demo",
     f"{R_HOME}/library/*/tests",
     f"{R_HOME}/tests",
+    f"{R_HOME}/library/translations",  # message catalogs (D19)
     f"{R_HOME}/library/*/po",
 ]
 
