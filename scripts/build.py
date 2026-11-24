@@ -42,6 +42,7 @@ import os
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -141,17 +142,50 @@ def elf_files(root):
     )
 
 
-# The page size patchelf aligns the segment it adds to, per architecture
-# (design §6.3, #43). Without it patchelf takes the file's largest
-# PT_LOAD p_align, 2 MiB for most libraries, and pads each rewritten file
-# out to the next 2 MiB boundary with zeros. x86_64 kernels map 4 KiB
-# pages; aarch64 kernels may use 64 KiB ones, so 64 KiB is the smallest
-# safe value there.
+# The page size of the wheel's architecture (design §6.3, #43): 4 KiB on
+# x86_64; aarch64 kernels may use 64 KiB pages, so 64 KiB there.
 PAGE_SIZE = {"x86_64": 4096, "aarch64": 65536}
+PT_LOAD = 1
+
+
+def lower_load_align(path, page_size):
+    """Lower every PT_LOAD p_align above ``page_size`` to it (#43).
+
+    patchelf (0.19) starts the segment each rewrite adds at the next
+    multiple of the file's largest p_align, whatever ``--page-size``
+    says, and fills the gap with zeros: 2 MiB per rewrite for libraries
+    linked with ``-z max-page-size=0x200000``. The segments stay
+    congruent modulo ``page_size``, which is all the loader maps by.
+    Returns the number of headers changed.
+    """
+    with path.open("r+b") as f:
+        ident = f.read(16)
+        if ident[:4] != b"\x7fELF" or ident[4] != 2 or ident[5] != 1:
+            raise SystemExit(f"not a little-endian ELF64 file: {path}")
+        f.seek(0x20)
+        (phoff,) = struct.unpack("<Q", f.read(8))
+        f.seek(0x36)
+        phentsize, phnum = struct.unpack("<HH", f.read(4))
+        changed = 0
+        for i in range(phnum):
+            f.seek(phoff + i * phentsize)
+            p_type, _, p_offset, p_vaddr = struct.unpack("<IIQQ", f.read(24))
+            f.seek(phoff + i * phentsize + 48)
+            (p_align,) = struct.unpack("<Q", f.read(8))
+            if p_type != PT_LOAD or p_align <= page_size:
+                continue
+            if (p_vaddr - p_offset) % page_size:
+                raise SystemExit(f"{path}: PT_LOAD {i} not congruent mod {page_size}")
+            f.seek(phoff + i * phentsize + 48)
+            f.write(struct.pack("<Q", page_size))
+            changed += 1
+    return changed
 
 
 def patchelf(*args):
+    """patchelf ``args`` on the file named last, at the wheel's page size."""
     page_size = PAGE_SIZE[TAG.split("_", 3)[3]]
+    lower_load_align(Path(args[-1]), page_size)
     subprocess.run(
         ["patchelf", "--page-size", str(page_size), *map(str, args)], check=True
     )
@@ -604,8 +638,7 @@ def repair(stage, runtime, deps):
     if missing:
         raise SystemExit("repair: not found:\n  " + "\n  ".join(missing))
 
-    # One patchelf call per file: each call that grows .dynstr adds a
-    # segment, so a graft rewritten twice would carry two (#43).
+    # One patchelf call per file, a graft's SONAME with the rest (#43).
     for path, needed in sorted(plan.items()):
         args = ["--set-soname", sonames[path]] if path in sonames else []
         dirs = []
