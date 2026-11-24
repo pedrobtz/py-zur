@@ -350,7 +350,6 @@ RPROFILE_ZUR = """
 ## zur (design §6.4): R is built without pango (D14), so grDevices would
 ## default bitmapType to "Xlib", which an R built --without-x cannot use.
 ## grDevices sets only options not set yet, so a user's choice still wins.
-options(repos = c(CRAN = "https://p3m.dev/cran/__linux__/noble/latest"))  # TEMPORARY
 options(bitmapType = "cairo")
 """
 
