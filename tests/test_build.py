@@ -12,6 +12,7 @@ auditwheel, not from the build script.
 """
 
 import base64
+import ctypes
 import hashlib
 import importlib.resources
 import json
@@ -26,6 +27,11 @@ from pathlib import Path
 import pytest
 from elftools.elf.dynamic import DynamicSection
 from elftools.elf.elffile import ELFFile
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -276,14 +282,31 @@ def test_rscript_front_ends_are_scripts(members, where):
     assert stat.S_ISREG(mode) and mode & 0o111
     assert data[:4] != b"\x7fELF"
     assert data.startswith(b"#!/bin/sh\n")
-    assert b'exec "${RHOME}/bin/exec/Rscript" "$@"\n' in data
+    assert b'exec "${RHOME}/libexec/Rscript" "$@"\n' in data
 
 
-def test_compiled_rscript_is_only_in_exec(members, elfs):
+def test_compiled_rscript_is_only_in_libexec(members, elfs):
     compiled = sorted(n for n in elfs if Path(n).name == "Rscript")
-    assert compiled == [f"{RUNTIME}/lib/R/bin/exec/Rscript"]
+    assert compiled == [f"{RUNTIME}/lib/R/libexec/Rscript"]
     _, data = members[compiled[0]]
     assert BUILD_PREFIX.encode() not in data
+
+
+def test_bin_exec_holds_only_r(members):
+    # R CMD INSTALL takes every file in bin/exec for a sub-architecture.
+    exec_dir = f"{RUNTIME}/lib/R/bin/exec/"
+    assert [n for n in members if n.startswith(exec_dir)] == [exec_dir + "R"]
+
+
+def test_grafted_fontconfig_is_the_pinned_version(tree, elfs):
+    # 2.15 reads <dir prefix="relative"> (design §6.4); FcGetVersion() is
+    # major * 10000 + minor * 100 + revision.
+    with (REPO / "manifests/linux.toml").open("rb") as f:
+        (pin,) = [e for e in tomllib.load(f)["dependency"] if e["name"] == "fontconfig"]
+    major, minor, rev = map(int, pin["version"].split("."))
+    (graft,) = [n for n in elfs if re.fullmatch(r"zur\.libs/libfontconfig-.*", n)]
+    lib = ctypes.CDLL(str(tree / graft))
+    assert lib.FcGetVersion() == major * 10000 + minor * 100 + rev
 
 
 def test_font_family_and_fontconfig_file(members):
@@ -299,6 +322,10 @@ def test_font_family_and_fontconfig_file(members):
         assert members[fonts + face][1][:4] == b"\x00\x01\x00\x00"  # TrueType
     conf = members[f"{RUNTIME}/lib/R/etc/fonts/fonts.conf"][1].decode()
     assert '<dir prefix="relative">../../share/fonts</dir>' in conf
+    # Every directory it names is relative, the system's or the user's.
+    dirs = re.findall(r"<(?:dir|cachedir)[^>]*>([^<]*)<", conf)
+    assert dirs and not any(d.startswith(BUILD_PREFIX) for d in dirs)
+    assert BUILD_PREFIX not in conf
 
 
 def test_internal_tzcode(members):

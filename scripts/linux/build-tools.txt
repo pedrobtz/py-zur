@@ -5,6 +5,8 @@
 # only run during the build.
 #
 # perl: OpenSSL's Configure (IPC::Cmd and other core modules).
-# xz: unpacks curl's .tar.xz.
+# xz: unpacks curl's and fontconfig's .tar.xz.
 perl
 xz
+# gperf: fontconfig's object hash (src/fcobjshash.h), built by build-deps.sh.
+gperf

@@ -269,11 +269,12 @@ def relocate_rconfig(path):
 
 # bin/Rscript, in place of the compiled Rscript (design §5). The binary
 # reads RHOME to find its R and otherwise uses the home compiled into it,
-# which scrub() overwrites; it moves to bin/exec/Rscript, beside R's own
-# binary, and this script runs it with RHOME from the script's location.
+# which scrub() overwrites; it moves to libexec/Rscript under R_HOME, and
+# this script runs it with RHOME from the script's location. Not
+# bin/exec/: R CMD INSTALL takes every file there for a sub-architecture.
 RSCRIPT = """\
 #!/bin/sh
-# zur (design §5): runs the compiled Rscript in bin/exec with RHOME set
+# zur (design §5): runs the compiled Rscript in libexec with RHOME set
 # from this script's own location, overriding any inherited RHOME, and
 # drops an inherited R_HOME as the launcher does, so this Rscript runs
 # this R however it is started. Like bin/R, it does not follow a symlink
@@ -281,7 +282,7 @@ RSCRIPT = """\
 RHOME="$(CDPATH= cd -- "$(dirname -- "$0")/{home}" && pwd -P)"
 export RHOME
 unset R_HOME
-exec "${{RHOME}}/bin/exec/Rscript" "$@"
+exec "${{RHOME}}/libexec/Rscript" "$@"
 """
 
 
@@ -291,7 +292,9 @@ def wrap_rscript(runtime):
     compiled = r_bin / "Rscript"
     if not is_elf(compiled):
         raise SystemExit(f"{compiled}: not the compiled Rscript")
-    compiled.replace(r_bin / "exec/Rscript")
+    libexec = runtime / "lib/R/libexec"
+    libexec.mkdir()
+    compiled.replace(libexec / "Rscript")
     for path, home in [
         (r_bin / "Rscript", ".."),
         (runtime / "bin/Rscript", "../lib/R"),
@@ -299,6 +302,23 @@ def wrap_rscript(runtime):
         path.unlink(missing_ok=True)  # the copy (or link) make install wrote
         path.write_text(RSCRIPT.format(home=home))
         path.chmod(0o755)
+
+
+# Appended to the system profile, which R reads first, even under
+# --vanilla, before grDevices loads (design §6.4).
+RPROFILE_ZUR = """
+## zur (design §6.4): R is built without pango (D14), so grDevices would
+## default bitmapType to "Xlib", which an R built --without-x cannot use.
+## grDevices sets only options not set yet, so a user's choice still wins.
+options(bitmapType = "cairo")
+"""
+
+
+def relocate_rprofile(path):
+    text = path.read_text()
+    if "bitmapType" in text:
+        raise SystemExit(f"{path}: already sets bitmapType")
+    path.write_text(text + RPROFILE_ZUR)
 
 
 def relocate(runtime, prefix, deps):
@@ -312,6 +332,7 @@ def relocate(runtime, prefix, deps):
     renviron = etc / "Renviron"
     renviron.write_text(renviron.read_text().replace(prefix, "${R_HOME}/../.."))
     relocate_rconfig(runtime / "lib/R/include/Rconfig.h")
+    relocate_rprofile(runtime / "lib/R/library/base/R/Rprofile")
     pc = runtime / "lib/pkgconfig/libR.pc"
     if pc.exists():
         pc.write_text(pc.read_text().replace(prefix, "${pcfiledir}/../.."))

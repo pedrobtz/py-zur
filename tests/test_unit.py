@@ -342,13 +342,14 @@ def test_manifest_entry_missing_a_field_is_refused(tmp_path, drop, message):
 
 
 def test_committed_manifest():
-    # Valid, libcurl and OpenSSL built from source (§16 question 2), and
+    # Valid, libcurl and OpenSSL built from source (§16 question 2) and
+    # fontconfig for <dir prefix="relative"> (design §6.4), and
     # each source URL names the version the entry claims.
     with MANIFEST.open("rb") as f:
         entries = tomllib.load(f)["dependency"]
     assert deps_py("check").returncode == 0
     sources = {e["name"]: e for e in entries if e["origin"] == "source"}
-    assert sorted(sources) == ["curl", "openssl"]
+    assert sorted(sources) == ["curl", "fontconfig", "openssl"]
     for e in sources.values():
         assert Path(e["url"]).name.startswith(f"{e['name']}-{e['version']}.tar.")
     sonames = [s for e in entries for s in e["sonames"]]
@@ -550,8 +551,9 @@ def rscript_runtime(tmp_path):
     for p in [runtime / "bin/Rscript", runtime / "lib/R/bin/Rscript"]:
         p.write_bytes(tiny_elf(["libc.so.6"]))
     build.wrap_rscript(runtime)
-    fake = runtime / "lib/R/bin/exec/Rscript"
+    fake = runtime / "lib/R/libexec/Rscript"
     assert fake.read_bytes()[:4] == b"\x7fELF"  # the binary moved there
+    assert list((runtime / "lib/R/bin/exec").iterdir()) == []  # not there
     fake.write_text(FAKE_RSCRIPT)
     fake.chmod(0o755)
     return runtime
@@ -575,7 +577,7 @@ def test_rscript_wrapper_sets_rhome_from_its_location(rscript_runtime, where):
     assert result.returncode == 0, result.stderr
     assert result.stderr == ""
     head, *args = result.stdout.splitlines()
-    assert head == f"{home}/bin/exec/Rscript|{home}|unset"
+    assert head == f"{home}/libexec/Rscript|{home}|unset"
     assert args == ["-e", "cat(1)", "a b"]
 
 
@@ -622,6 +624,17 @@ def test_fonts_ship_the_family_and_a_relative_fontconfig_file(tmp_path):
     assert family.find("string").text == "Liberation Sans"
     # Never the system's configuration (a newer fontconfig's elements).
     assert root.find("include") is None
+
+
+def test_rprofile_sets_cairo_bitmaps(tmp_path):
+    path = tmp_path / "Rprofile"
+    path.write_text("local({ x <- 1 })\n")
+    build.relocate_rprofile(path)
+    text = path.read_text()
+    assert text.startswith("local({ x <- 1 })\n")
+    assert text.rstrip().endswith('options(bitmapType = "cairo")')
+    with pytest.raises(SystemExit, match="already sets bitmapType"):
+        build.relocate_rprofile(path)
 
 
 def test_fonts_refuse_a_missing_face(tmp_path):

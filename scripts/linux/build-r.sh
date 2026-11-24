@@ -73,8 +73,10 @@ build() {
   # ac_cv_path_WHICH: Sys.which() runs "<WHICH> 'name'" through sh, and
   # configure would compile in the image's /usr/bin/which, which minimal
   # images lack (design §6.4). The shell's own `command -v` searches PATH
-  # the same way; configure takes a cache variable as found.
-  ac_cv_path_WHICH="command -v" \
+  # the same way; dash exits 127 when it finds nothing, which
+  # system(intern = TRUE) turns into an error, so the exit trap makes the
+  # status 0. configure takes a cache variable as found.
+  ac_cv_path_WHICH="trap 'exit 0' 0; command -v" \
     PATH="$deps/bin:$PATH" PKG_CONFIG_PATH="$deps/lib/pkgconfig" \
     CPPFLAGS="-I$deps/include" LDFLAGS="-L$deps/lib" \
     LIBnn=lib ./configure --prefix="$prefix" \

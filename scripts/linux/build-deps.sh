@@ -46,6 +46,20 @@ build_curl() {
   make install
 }
 
+# fontconfig: 2.15 reads <dir prefix="relative">, which the wheel's
+# fonts.conf needs (design §6.4); the image's 2.13.1 does not. Against the
+# image's freetype and expat. Its compiled-in configuration directory is
+# never read: bin/R sets FONTCONFIG_FILE. gperf (build-tools.txt) makes
+# its object hash.
+build_fontconfig() {
+  PKG_CONFIG_PATH="$deps/lib/pkgconfig" ./configure --prefix="$deps" \
+    --sysconfdir="$deps/etc" --localstatedir=/var \
+    --enable-shared --disable-static --disable-docs --disable-cache-build \
+    --disable-nls
+  make -j"$jobs"
+  make install
+}
+
 sources=$("$py" "$deps_py" sources)
 mkdir -p "$work"
 

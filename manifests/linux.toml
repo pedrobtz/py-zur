@@ -22,8 +22,9 @@
 # ships (R-admin's minimums are quoted), and R uses each on local data.
 # Versions are the newest in AlmaLinux 8's repositories on 2026-11-24.
 #
-# Decided 2026-11-24 (stage 6): the font family the wheel ships (design
-# §6.4) is pinned here too, as an "image" entry with no sonames.
+# Decided 2026-11-24 (stage 6): fontconfig is built too (design §6.1),
+# and the font family the wheel ships (design §6.4) is pinned here, as an
+# "image" entry with no sonames.
 
 # --- Built from source -----------------------------------------------------
 
@@ -46,6 +47,16 @@ sha256 = "8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
 license = "curl"
 sonames = ["libcurl.so.4"]
 why = "The image's 7.61.1 is from 2018 and links the image's OpenSSL 1.1.1; R's download.file() and url() go through it."
+
+[[dependency]]
+name = "fontconfig"
+version = "2.15.0"
+origin = "source"
+url = "https://www.freedesktop.org/software/fontconfig/release/fontconfig-2.15.0.tar.xz"
+sha256 = "63a0658d0e06e0fa886106452b58ef04f21f58202ea02a94c39de0d3335d7c0e"
+license = "HPND-sell-variant"
+sonames = ["libfontconfig.so.1"]
+why = "The image's 2.13.1 lacks <dir prefix=\"relative\">, which the wheel's relocatable fonts.conf needs (design §6.4); it parses local files only."
 
 # --- From the image ----------------------------------------------------------
 
@@ -118,16 +129,6 @@ package_version = "1.15.12-6.el8"
 license = "LGPL-2.1-only OR MPL-1.1"
 sonames = ["libcairo.so.2"]
 why = "R-admin needs 1.2.0 or later; the image's build has the PNG, PDF, PS and SVG surfaces R's devices use."
-
-[[dependency]]
-name = "fontconfig"
-version = "2.13.1"
-origin = "image"
-package = "fontconfig-devel"
-package_version = "2.13.1-4.el8"
-license = "HPND-sell-variant"
-sonames = ["libfontconfig.so.1"]
-why = "cairo-devel requires it; it reads the host's font configuration, whose format 2.13 understands."
 
 [[dependency]]
 name = "freetype"

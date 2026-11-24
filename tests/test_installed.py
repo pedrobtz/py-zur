@@ -313,6 +313,22 @@ def draw(tmp_path, name, device, text=True):
     return out.read_bytes()
 
 
+def test_bitmap_devices_use_cairo():
+    # Without pango grDevices would choose "Xlib" (design §6.4); the system
+    # profile sets "cairo", even under --vanilla.
+    assert rout('getOption("bitmapType")') == "cairo"
+
+
+def test_bitmap_type_set_by_the_user_wins():
+    code = (
+        'options(bitmapType = "Xlib"); loadNamespace("grDevices");'
+        ' cat(getOption("bitmapType"))'
+    )
+    result = run(["Rscript", "--vanilla", "--default-packages=NULL", "-e", code])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "Xlib"
+
+
 def test_png_draws_text(tmp_path):
     with_text = draw(tmp_path, "text.png", 'png("{out}")')
     assert with_text[:8] == b"\x89PNG\r\n\x1a\n"
