@@ -29,7 +29,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 10 | [Source packages across host compilers](#stage-10--source-packages-across-host-compilers) | full | [#11](https://github.com/pedrobtz/py-zur/issues/11) | [#36](https://github.com/pedrobtz/py-zur/pull/36) | 2026-11-24 |
 | 11 | [zur doctor](#stage-11--zur-doctor) | quick | [#12](https://github.com/pedrobtz/py-zur/issues/12) | [#37](https://github.com/pedrobtz/py-zur/pull/37) | 2026-11-24 |
 | 12 | [First-run warning](#stage-12--first-run-warning) | quick | [#13](https://github.com/pedrobtz/py-zur/issues/13) | [#39](https://github.com/pedrobtz/py-zur/pull/39) | 2026-11-24 |
-| 13 | [Licences and build info](#stage-13--licences-and-build-info) | quick | [#14](https://github.com/pedrobtz/py-zur/issues/14) | | |
+| 13 | [Licences and build info](#stage-13--licences-and-build-info) | quick | [#14](https://github.com/pedrobtz/py-zur/issues/14) | [#40](https://github.com/pedrobtz/py-zur/pull/40) | 2026-11-24 |
 | 14 | [Source mirror](#stage-14--source-mirror) | quick | [#15](https://github.com/pedrobtz/py-zur/issues/15) | | |
 | 15 | [Versioning and release pipeline](#stage-15--versioning-and-release-pipeline) | full | [#16](https://github.com/pedrobtz/py-zur/issues/16) | | |
 | 16 | [Benchmark and release gate](#stage-16--benchmark-and-release-gate) | quick | [#17](https://github.com/pedrobtz/py-zur/issues/17) | | |
@@ -1044,6 +1044,49 @@ and `BUILD-INFO.json` names every input exactly.
 
 **Design.** [§14](design.md#14-licensing), [§5](design.md#5-wheel-layout-and-launcher).
 
+**Deviations.** 2026-11-24:
+- `METADATA` has the generated `License-Expression` (D21), not the fixed
+  `GPL-2.0-or-later` of **Work**: the AND of R's, zur's and every
+  `BUILD-INFO.json` entry's SPDX expression, each term once (coordinator's
+  licensing decisions on #14). Core metadata 2.4; the deprecated
+  `License` field is gone.
+- The licence texts are in the wheel twice: `zur/_runtime/licenses/`
+  (design §5) and the `.dist-info`'s `licenses/`, where PEP 639 puts the
+  files `License-File` names (paths relative to it). About 125 kB of
+  the wheel each.
+- `licenses/` also holds `r/COPYING` (R's) and `zur/LICENSE` (the
+  repository's), and `BUILD-INFO.json` a `zur` object.
+- The 11 grafted libraries no configure option names get manifest
+  entries with `via` (libgfortran, libquadmath, ncurses, expat, jbigkit,
+  pixman, libX11, libXext, libXrender, libxcb, libXau), pinned and
+  installed like the others; the build refuses a graft no entry claims,
+  one from another source RPM (`rpm -qf`), and an entry SONAME nothing
+  bundles. libuuid, expected in #14, is no longer grafted (fontconfig
+  2.15 does not link it).
+- Image entries pin `srpm` (`nvr`, `url`, `sha256`), and `rpm-check`
+  refuses a package built from another source RPM. `BUILD-INFO.json`'s
+  `source` per dependency, and `source_unknown` in the manifest for one
+  with none (unused on Linux).
+- `build-r.sh deps` installs with documentation and reinstalls the
+  image's own packages whose licence file is documentation
+  (`libX11-common`, `libXau`, `libXext`, `libXrender`); libxcb's text is
+  taken from its source RPM (no binary package has it); `cpio` and
+  `bzip2` join `build-tools.txt`. `build-deps.sh` keeps the built
+  libraries' licence files in `$ZUR_DEPS/share/licenses`, so the manifest
+  change rebuilt the cache once.
+- SPDX ids differing from #14's expectation, each from the file:
+  ICU 60.3 is `Unicode-DFS-2016 AND ICU AND BSD-3-Clause AND NAIST-2003
+  AND LicenseRef-public-domain`; libX11 `MIT AND X11` (not audited
+  notice by notice, design §14); libXext a compound of seven; libXau
+  `MIT-open-group`; libXrender `HPND-sell-variant`; libxcb `X11`.
+- Tests added beyond **Tests.**: in `tests/test_unit.py` the manifest's
+  new fields, `deps.py licenses`, the provenance refusals, the
+  expression (the committed manifest's, written out), `METADATA`
+  validated by `packaging`; `tests/test_prefix.py` the collected files;
+  `tests/test_build.py` the sources and the files per entry;
+  `tests/test_installed.py` the installed licences. `packaging` joins
+  the dev group.
+
 ## Stage 14 — Source mirror
 
 **Issue.** [#15](https://github.com/pedrobtz/py-zur/issues/15), sub-issue of [#2](https://github.com/pedrobtz/py-zur/issues/2).
@@ -1083,6 +1126,12 @@ the wheels bundle is on a GitHub release of this repository (D15).
 > Reading used: §14 says "each zur version has a GitHub release". A
 > `.postN` is a version, so it gets its own release, holding the sources
 > of every platform it carries.
+
+> Note from stage 13 (2026-11-24): the mirror covers the source RPMs of
+> all grafted image libraries, not only the `source` entries: every
+> `image` entry's `srpm` (`BUILD-INFO.json`'s `source` with `kind`
+> `srpm`), the transitive ones included. `BUILD-INFO.json`'s
+> `source_release` (null until then) is the field to fill.
 
 ## Stage 15 — Versioning and release pipeline
 
@@ -1560,6 +1609,7 @@ Each decision of [§15](design.md#15-decisions) that needs work:
 | D18 macOS binaries unmodified | 21, 22 |
 | D19 translations dropped | 9, 21, 23 |
 | D20 `innoextract` first | 23 |
+| D21 generated `License-Expression` | 13; 21, 22, 23 |
 
 ## After the first release
 
