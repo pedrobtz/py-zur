@@ -917,6 +917,11 @@ in stages 21 to 23.
   the shim from `R.home("lib")`, then the same after `dnf install
   flexiblas`. Stage 5's "exactly" line is corrected; the D16 coverage
   row now names stage 11.
+- The bare `rockylinux:9` image already has `libgomp` (`rpm -q`,
+  2026-11-24), so there `zur doctor` names `libgfortran` alone, prints
+  `dnf install -y libgfortran` and exits 1; the tests take each bare
+  image's absent set from its package manager and expect both runtimes
+  everywhere else.
 - All the doctor checks run in a job of their own,
   `doctor-linux-x86_64`, one container per starting state
   (`debian:12-slim`, `debian:13-slim`, `rockylinux:8`, `rockylinux:9`

@@ -691,19 +691,33 @@ def test_doctor_agrees_with_the_package_manager():
     assert command.stdout == (line + "\n" if line else "")
 
 
+# What each bare image lacks. rockylinux:9 ships libgomp already (rpm -q,
+# 2026-11-24), so only libgfortran is missing there.
+BARE_ABSENT = {"rockylinux:9": ["libgfortran.so.5"]}
+
+
+def bare_absent():
+    """(file names, packages) the bare image lacks, in RUNTIMES order."""
+    files = BARE_ABSENT.get(CONTAINER, RUNTIME_FILES)
+    names = dict(zip(RUNTIME_FILES, RUNTIME_PACKAGES[host_family()], strict=True))
+    return files, [names[f] for f in files]
+
+
 @doctor_case("missing")
 def test_doctor_names_the_missing_runtimes():
     fam = host_family()
-    # The image lacks both (for debian:13-slim, the check the stage asked
-    # for before the eval).
-    assert [p for p in RUNTIME_PACKAGES[fam] if installed(p)] == []
+    files, packages = bare_absent()
+    # What the image lacks, by its package manager (for debian:13-slim,
+    # the check the stage asked for before the eval).
+    absent = [p for p in RUNTIME_PACKAGES[fam] if not installed(p)]
+    assert absent == packages
     report = zur("doctor")
     assert_doctor_output(report)
     assert report.returncode == 1
-    for file, package in zip(RUNTIME_FILES, RUNTIME_PACKAGES[fam], strict=True):
+    for file, package in zip(files, packages, strict=True):
         assert f"  missing  {file:<16}  ({package})\n" in report.stdout
     if os.getuid() == 0:
-        line = f"{INSTALL[fam]} {' '.join(RUNTIME_PACKAGES[fam])}"
+        line = f"{INSTALL[fam]} {' '.join(packages)}"
         assert f"\n  {line}\n" in report.stdout
         assert zur("doctor", "--command").stdout == line + "\n"
     # R itself needs neither.
@@ -714,7 +728,7 @@ def test_doctor_names_the_missing_runtimes():
 @pytest.mark.skipif(os.getuid() != 0, reason="starts the doctor as another user")
 def test_doctor_command_has_sudo_only_when_not_root():
     fam = host_family()
-    line = f"{INSTALL[fam]} {' '.join(RUNTIME_PACKAGES[fam])}"
+    line = f"{INSTALL[fam]} {' '.join(bare_absent()[1])}"
     as_root = zur("doctor", "--command")
     assert as_root.stdout == line + "\n"
     assert not as_root.stdout.startswith("sudo")
@@ -736,8 +750,10 @@ def test_doctor_on_an_unrecognised_distribution(tmp_path):
     assert_doctor_output(report)
     assert report.returncode == 1
     assert "(unrecognised distribution)" in report.stdout.splitlines()[0]
+    files, _ = bare_absent()
     for file, deb, rpm in zip(RUNTIME_FILES, *RUNTIME_PACKAGES.values(), strict=True):
-        assert f"  missing  {file:<16}  (Debian: {deb}, RHEL: {rpm})\n" in report.stdout
+        line = f"  missing  {file:<16}  (Debian: {deb}, RHEL: {rpm})\n"
+        assert (line in report.stdout) == (file in files)
     assert "apt-get" not in report.stdout and "dnf" not in report.stdout
     command = zur("doctor", "--command", env=env)
     assert (command.returncode, command.stdout) == (1, "")
