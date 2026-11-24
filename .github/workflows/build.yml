@@ -155,6 +155,14 @@ jobs:
           docker exec zur uv run --frozen scripts/deps.py build-info \
             "$ZUR_PREFIX/BUILD-INFO.json"
           docker exec zur cat "$ZUR_PREFIX/BUILD-INFO.json"
+      # Design §14 (roadmap stage 13): each entry's licence files into
+      # $ZUR_PREFIX/licenses/<name>/, from the image, the built
+      # dependencies, or (libxcb) its source RPM.
+      - name: Collect the licence files
+        run: |
+          docker exec zur uv run --frozen scripts/deps.py licenses \
+            "$ZUR_PREFIX/licenses"
+          docker exec zur find "$ZUR_PREFIX/licenses" -type f
       - name: DT_NEEDED of every ELF file in the prefix
         run: docker exec zur uv run --frozen scripts/elf_needed.py "$ZUR_PREFIX"
       - name: Tests against the prefix

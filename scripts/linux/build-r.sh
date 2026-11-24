@@ -39,9 +39,17 @@ deps() {
   while IFS= read -r tool; do
     tools+=("$tool")
   done < <(grep -v '^\s*\(#\|$\)' "$here/build-tools.txt")
+  # With their documentation: some packages mark their licence text as
+  # such, and the image's dnf.conf has tsflags=nodocs (design §14).
   # shellcheck disable=SC2086 # one package spec per word
-  dnf install -y "${tools[@]}" $pinned
+  dnf install -y --setopt=tsflags= "${tools[@]}" $pinned
   "$py" "$deps_py" rpm-check
+  # Packages the image already had, installed without it.
+  owners=$("$py" "$deps_py" license-owners)
+  if [ -n "$owners" ]; then
+    # shellcheck disable=SC2086 # one package name per word
+    dnf reinstall -y --setopt=tsflags= $owners
+  fi
   if [ "${ZUR_MEASURE_PANGO:-}" = 1 ]; then
     echo "ZUR_MEASURE_PANGO=1: installing pango-devel, for the D14 measurement only" >&2
     dnf install -y pango-devel

@@ -1,4 +1,4 @@
-# Every library R is built against on Linux (design §6.1, §11), for the
+# Every library the Linux wheel bundles (design §6.1, §11, §14), for the
 # manylinux_2_28 image named in scripts/linux/image. Read by
 # scripts/deps.py; the CI cache of the libraries built from source is
 # keyed on this file's hash and the image digest (roadmap stage 4).
@@ -9,12 +9,30 @@
 #                   exactly `package_version` ([epoch:]version-release);
 #                   "source": built in the image from `url`, checked
 #                   against `sha256` before anything is unpacked
-#   license         SPDX expression (stage 13 checks it against the
-#                   licence files it ships)
+#   license         SPDX expression of the licence files below, as read
+#                   in them (stage 13); `LicenseRef-public-domain` where a
+#                   file puts a part in the public domain
+#   license_files   the files shipped in the wheel under
+#                   licenses/<name>/: for "source", paths in the unpacked
+#                   tarball (build-deps.sh keeps them); for "image", paths
+#                   in the image, owned by a package built from `srpm`, or
+#                   `srpm:<archive>/<path>` for a file only the source RPM
+#                   has. At least one.
 #   sonames         the shared libraries it provides that R's files or
-#                   another entry link
+#                   another entry link; every file the repair grafts
+#                   belongs to exactly one entry (scripts/build.py)
 #   why             for "image": why that version is adequate; for
 #                   "source": why it is not taken from the image
+# and, for "image" entries only:
+#   srpm            the AlmaLinux 8 source RPM the package is built from:
+#                   `nvr` (name-version-release; rpm-check refuses an
+#                   installed package built from another), `url` and
+#                   `sha256` (from the repository's metadata); stage 14
+#                   mirrors it. An entry whose source cannot be identified
+#                   has `source_unknown = { reason, looked_in }` instead
+#                   (design §14); none does yet.
+#   via             (optional) the entry, or "r", whose files link this
+#                   library: the libraries no configure option asks for
 #
 # Decided 2026-11-24 (stage 4). libcurl and OpenSSL are built: they face
 # the network, and §16 question 2 tracks them for rebuilds. Every other
@@ -25,6 +43,13 @@
 # Decided 2026-11-24 (stage 6): fontconfig is built too (design §6.1),
 # and the font family the wheel ships (design §6.4) is pinned here, as an
 # "image" entry with no sonames.
+#
+# Decided 2026-11-24 (stage 13): the libraries the repair grafts that no
+# configure option names (cairo's X11 and pixman, readline's libtinfo,
+# the Fortran runtime, ...) are entries too, with `via`. Source RPMs are
+# in https://vault.almalinux.org/8.10/, the archive of AlmaLinux 8.10,
+# the last minor release; their SHA-256 are from its
+# repodata on 2026-11-24.
 
 # --- Built from source -----------------------------------------------------
 
@@ -35,6 +60,7 @@ origin = "source"
 url = "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz"
 sha256 = "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
 license = "Apache-2.0"
+license_files = ["LICENSE.txt"]
 sonames = ["libssl.so.3", "libcrypto.so.3"]
 why = "The image's 1.1.1k is past upstream end of life; 3.5 is the current LTS series (supported to 2030), so rebuilds take patch releases only."
 
@@ -45,16 +71,21 @@ origin = "source"
 url = "https://curl.se/download/curl-8.23.0.tar.xz"
 sha256 = "8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
 license = "curl"
+license_files = ["COPYING"]
 sonames = ["libcurl.so.4"]
 why = "The image's 7.61.1 is from 2018 and links the image's OpenSSL 1.1.1; R's download.file() and url() go through it."
 
+# COPYING: the main notice (HPND-sell-variant), fcatomic.h and fcmutex.h
+# (MIT-Modern-Variant), fcfoundry.h (MIT), CaseFolding.txt (Unicode's
+# terms), fcmd5.h and ftglue.c (public domain).
 [[dependency]]
 name = "fontconfig"
 version = "2.15.0"
 origin = "source"
 url = "https://www.freedesktop.org/software/fontconfig/release/fontconfig-2.15.0.tar.xz"
 sha256 = "63a0658d0e06e0fa886106452b58ef04f21f58202ea02a94c39de0d3335d7c0e"
-license = "HPND-sell-variant"
+license = "HPND-sell-variant AND MIT-Modern-Variant AND MIT AND Unicode-DFS-2016 AND LicenseRef-public-domain"
+license_files = ["COPYING"]
 sonames = ["libfontconfig.so.1"]
 why = "The image's 2.13.1 lacks <dir prefix=\"relative\">, which the wheel's relocatable fonts.conf needs (design §6.4); it parses local files only."
 
@@ -66,7 +97,9 @@ version = "1.2.11"
 origin = "image"
 package = "zlib-devel"
 package_version = "1.2.11-25.el8"
+srpm = { nvr = "zlib-1.2.11-25.el8", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/zlib-1.2.11-25.el8.src.rpm", sha256 = "4f302dc61265c1d77da1a5cf96af4aee0481807374b24ac872590744eb13869c" }
 license = "Zlib"
+license_files = ["/usr/share/licenses/zlib/README"]
 sonames = ["libz.so.1"]
 why = "R-admin needs 1.2.5 or later; used for gzfile() and PNG, and by the curl built here."
 
@@ -76,17 +109,22 @@ version = "1.0.6"
 origin = "image"
 package = "bzip2-devel"
 package_version = "1.0.6-28.el8_10"
+srpm = { nvr = "bzip2-1.0.6-28.el8_10", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/bzip2-1.0.6-28.el8_10.src.rpm", sha256 = "bfa3eb8488c9852e9cf0be13accfa5f20d53de8d9905365070c6350e85e60b06" }
 license = "bzip2-1.0.6"
+license_files = ["/usr/share/licenses/bzip2-libs/LICENSE"]
 sonames = ["libbz2.so.1"]
 why = "R-admin needs 1.0.6 or later; used for bzfile()."
 
+# COPYING: "liblzma is in the public domain" (0BSD only from 5.6).
 [[dependency]]
 name = "xz"
 version = "5.2.4"
 origin = "image"
 package = "xz-devel"
 package_version = "5.2.4-4.el8_6"
+srpm = { nvr = "xz-5.2.4-4.el8_6", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/xz-5.2.4-4.el8_6.src.rpm", sha256 = "40f58591ffb8f0658671e6ea0b89960694afebd11b78b650e8c73a4657f2d6ad" }
 license = "LicenseRef-public-domain"
+license_files = ["/usr/share/doc/xz/COPYING"]
 sonames = ["liblzma.so.5"]
 why = "R-admin needs 5.0.3 or later; used for xzfile()."
 
@@ -96,17 +134,25 @@ version = "10.32"
 origin = "image"
 package = "pcre2-devel"
 package_version = "10.32-4.el8_10"
+srpm = { nvr = "pcre2-10.32-4.el8_10", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/pcre2-10.32-4.el8_10.src.rpm", sha256 = "e5f037b45622666c0ef38cd3d37f8d96321000c064ccc24633a88c7699bf6960" }
 license = "BSD-3-Clause"
+license_files = ["/usr/share/licenses/pcre2/LICENCE"]
 sonames = ["libpcre2-8.so.0"]
 why = "R-admin needs 10.30 or later, the release with the rewritten matcher."
 
+# LICENSE: Unicode's licence for ICU 58 and later, the ICU licence for
+# 1.8.1 to 57.1, the word-break dictionaries (Google's and the Lao and
+# Burmese ones BSD-3-Clause, IPADIC's NAIST-2003) and the time zone
+# database (public domain).
 [[dependency]]
 name = "icu"
 version = "60.3"
 origin = "image"
 package = "libicu-devel"
 package_version = "60.3-2.el8_1"
-license = "ICU"
+srpm = { nvr = "icu-60.3-2.el8_1", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/icu-60.3-2.el8_1.src.rpm", sha256 = "850ccb89f81f0282bdeed2483774949c8ebefd6ccb9768c652da54a6b7508e22" }
+license = "Unicode-DFS-2016 AND ICU AND BSD-3-Clause AND NAIST-2003 AND LicenseRef-public-domain"
+license_files = ["/usr/share/licenses/libicu/LICENSE"]
 sonames = ["libicuuc.so.60", "libicui18n.so.60", "libicudata.so.60"]
 why = "R uses ICU for collation and iconv only; packages needing a newer ICU (stringi) bring their own."
 
@@ -116,7 +162,9 @@ version = "7.0"
 origin = "image"
 package = "readline-devel"
 package_version = "7.0-10.el8"
+srpm = { nvr = "readline-7.0-10.el8", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/readline-7.0-10.el8.src.rpm", sha256 = "0114c765f8592cfa4ebe79561cf45dccd53e110adbb1661b6e395384ef973cdf" }
 license = "GPL-3.0-or-later"
+license_files = ["/usr/share/licenses/readline/COPYING"]
 sonames = ["libreadline.so.7"]
 why = "R-admin needs 6.0 or later for all console features; used only by the interactive console."
 
@@ -126,17 +174,32 @@ version = "1.15.12"
 origin = "image"
 package = "cairo-devel"
 package_version = "1.15.12-6.el8"
+srpm = { nvr = "cairo-1.15.12-6.el8", url = "https://vault.almalinux.org/8.10/AppStream/Source/Packages/cairo-1.15.12-6.el8.src.rpm", sha256 = "3b4dd609d5161b02fa2adc6dbf3d1298d47b80304849e9eb87e7b730554ad746" }
 license = "LGPL-2.1-only OR MPL-1.1"
+license_files = [
+  "/usr/share/licenses/cairo/COPYING",
+  "/usr/share/licenses/cairo/COPYING-LGPL-2.1",
+  "/usr/share/licenses/cairo/COPYING-MPL-1.1",
+]
 sonames = ["libcairo.so.2"]
 why = "R-admin needs 1.2.0 or later; the image's build has the PNG, PDF, PS and SVG surfaces R's devices use."
 
+# LICENSE.TXT: FTL or "GPL version 2 (any later version can be used
+# also)"; it also names the BDF/PCF drivers' X11-style licence, the gzip
+# module's zlib licence and public-domain MD5 code, without their texts.
 [[dependency]]
 name = "freetype"
 version = "2.9.1"
 origin = "image"
 package = "freetype-devel"
 package_version = "2.9.1-10.el8_10"
+srpm = { nvr = "freetype-2.9.1-10.el8_10", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/freetype-2.9.1-10.el8_10.src.rpm", sha256 = "67c7734b0bd2c4a71afb10c8d53950f19ba9a26f641bad12a43939f4533c57c7" }
 license = "FTL OR GPL-2.0-or-later"
+license_files = [
+  "/usr/share/licenses/freetype/LICENSE.TXT",
+  "/usr/share/licenses/freetype/FTL.TXT",
+  "/usr/share/licenses/freetype/GPLv2.TXT",
+]
 sonames = ["libfreetype.so.6"]
 why = "cairo-devel requires it; it renders the fonts fontconfig finds, which needs no newer feature."
 
@@ -146,7 +209,9 @@ version = "1.6.34"
 origin = "image"
 package = "libpng-devel"
 package_version = "2:1.6.34-11.el8_10"
+srpm = { nvr = "libpng-1.6.34-11.el8_10", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/libpng-1.6.34-11.el8_10.src.rpm", sha256 = "760fe7668979486a7c712f2886d0676089825f82b8640d68f419a5a7fe91a54d" }
 license = "Libpng"
+license_files = ["/usr/share/licenses/libpng/LICENSE"]
 sonames = ["libpng16.so.16"]
 why = "R-admin needs 1.2.7 or later; R only writes PNG files."
 
@@ -156,7 +221,9 @@ version = "1.5.3"
 origin = "image"
 package = "libjpeg-turbo-devel"
 package_version = "1.5.3-14.el8_10"
+srpm = { nvr = "libjpeg-turbo-1.5.3-14.el8_10", url = "https://vault.almalinux.org/8.10/AppStream/Source/Packages/libjpeg-turbo-1.5.3-14.el8_10.src.rpm", sha256 = "cdd6169e410aa6b9a0bee82c637ffcfcb8dd0d72699924ed514215169f2cbc55" }
 license = "IJG AND BSD-3-Clause AND Zlib"
+license_files = ["/usr/share/licenses/libjpeg-turbo/LICENSE.md"]
 sonames = ["libjpeg.so.62"]
 why = "R's jpeg() needs the libjpeg 6.2 API, which every libjpeg-turbo provides; R only writes JPEG files."
 
@@ -166,18 +233,184 @@ version = "4.0.9"
 origin = "image"
 package = "libtiff-devel"
 package_version = "4.0.9-39.el8_10"
+srpm = { nvr = "libtiff-4.0.9-39.el8_10", url = "https://vault.almalinux.org/8.10/AppStream/Source/Packages/libtiff-4.0.9-39.el8_10.src.rpm", sha256 = "e26dd5ae6f96bd76de3d5bfc06dbff743861bbe022c7e0772e43df1dc61eaea8" }
 license = "libtiff"
+license_files = ["/usr/share/doc/libtiff/COPYRIGHT"]
 sonames = ["libtiff.so.5"]
 why = "R's tiff() needs libtiff 4's API; R only writes TIFF files."
 
+# --- From the image, linked through another entry (stage 13) ----------------
+
+# The Fortran runtime R's own libraries link (D17). The libgfortran
+# package has no licence file; libgcc, from the same source RPM, has
+# GCC's, and these two are libgfortran's.
+[[dependency]]
+name = "libgfortran"
+version = "8.5.0"
+origin = "image"
+package = "libgfortran"
+package_version = "8.5.0-31.el8_10.alma.1"
+srpm = { nvr = "gcc-8.5.0-31.el8_10.alma.1", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/gcc-8.5.0-31.el8_10.alma.1.src.rpm", sha256 = "a348a042f0e712936fe2b58b206ba352c1a12960437fadb5861b990c7ea7f6e2" }
+license = "GPL-3.0-or-later WITH GCC-exception-3.1"
+license_files = [
+  "/usr/share/licenses/libgcc/COPYING3",
+  "/usr/share/licenses/libgcc/COPYING.RUNTIME",
+]
+sonames = ["libgfortran.so.5"]
+via = "r"
+why = "The system gcc 8.5's runtime, which the toolset's gfortran links (design §6.2, D17); grafted under a hashed name for R's own libraries only."
+
+[[dependency]]
+name = "libquadmath"
+version = "8.5.0"
+origin = "image"
+package = "libquadmath"
+package_version = "8.5.0-31.el8_10.alma.1"
+srpm = { nvr = "gcc-8.5.0-31.el8_10.alma.1", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/gcc-8.5.0-31.el8_10.alma.1.src.rpm", sha256 = "a348a042f0e712936fe2b58b206ba352c1a12960437fadb5861b990c7ea7f6e2" }
+license = "LGPL-2.1-or-later"
+license_files = ["/usr/share/licenses/libquadmath/COPYING.LIB.libquadmath"]
+sonames = ["libquadmath.so.0"]
+via = "libgfortran"
+why = "libgfortran links it (D17); from the same gcc as libgfortran."
+
+# COPYING (in ncurses-base): "distribute, distribute with modifications".
+[[dependency]]
+name = "ncurses"
+version = "6.1"
+origin = "image"
+package = "ncurses-libs"
+package_version = "6.1-10.20180224.el8"
+srpm = { nvr = "ncurses-6.1-10.20180224.el8", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/ncurses-6.1-10.20180224.el8.src.rpm", sha256 = "7849a7ce6f5cda8cd4518294b1837e353c8a5a37c549243dd27cee4e417f41e4" }
+license = "X11-distribute-modifications-variant"
+license_files = ["/usr/share/licenses/ncurses-base/COPYING"]
+sonames = ["libtinfo.so.6"]
+via = "readline"
+why = "readline links libtinfo; the image's version is the one readline is built against."
+
+[[dependency]]
+name = "expat"
+version = "2.5.0"
+origin = "image"
+package = "expat"
+package_version = "2.5.0-10.el8_10"
+srpm = { nvr = "expat-2.5.0-10.el8_10", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/expat-2.5.0-10.el8_10.src.rpm", sha256 = "922fb32ef51d3ce60e54d4fff9a0487d13007516fa76836fb0c2f8131478708c" }
+license = "MIT"
+license_files = ["/usr/share/licenses/expat/COPYING"]
+sonames = ["libexpat.so.1"]
+via = "fontconfig"
+why = "fontconfig parses fonts.conf with it; only local files."
+
+# COPYING is the GPL version 2 text; jbigkit is "version 2 or later".
+[[dependency]]
+name = "jbigkit"
+version = "2.1"
+origin = "image"
+package = "jbigkit-libs"
+package_version = "2.1-14.el8"
+srpm = { nvr = "jbigkit-2.1-14.el8", url = "https://vault.almalinux.org/8.10/AppStream/Source/Packages/jbigkit-2.1-14.el8.src.rpm", sha256 = "fb0e2e36e80631d1063a610fd52f6b4ea04ce0128ff4de258bd26091f3d38737" }
+license = "GPL-2.0-or-later"
+license_files = ["/usr/share/licenses/jbigkit-libs/COPYING"]
+sonames = ["libjbig.so.2.1"]
+via = "libtiff"
+why = "libtiff links it; R writes no JBIG."
+
+[[dependency]]
+name = "pixman"
+version = "0.38.4"
+origin = "image"
+package = "pixman"
+package_version = "0.38.4-4.el8"
+srpm = { nvr = "pixman-0.38.4-4.el8", url = "https://vault.almalinux.org/8.10/AppStream/Source/Packages/pixman-0.38.4-4.el8.src.rpm", sha256 = "00aa6a66d08ae4413469cd72ecbbcc8271ea5c5d74ad7948889eac85ed0cbfd7" }
+license = "MIT"
+license_files = ["/usr/share/doc/pixman/COPYING"]
+sonames = ["libpixman-1.so.0"]
+via = "cairo"
+why = "cairo's rasteriser; the image's cairo is built against it."
+
+# COPYING (in libX11-common) holds the X.Org 'standard copyright' (MIT)
+# and many legacy notices, mostly X11 and HPND-style; the expression is
+# the two the file names as its kinds. Not audited notice by notice.
+[[dependency]]
+name = "libX11"
+version = "1.6.8"
+origin = "image"
+package = "libX11"
+package_version = "1.6.8-10.el8_10"
+srpm = { nvr = "libX11-1.6.8-10.el8_10", url = "https://vault.almalinux.org/8.10/AppStream/Source/Packages/libX11-1.6.8-10.el8_10.src.rpm", sha256 = "9457e9f7f9c22f412c1a1ddf0dae46923884453d4da42e5c6755176916479288" }
+license = "MIT AND X11"
+license_files = ["/usr/share/doc/libX11-common/COPYING"]
+sonames = ["libX11.so.6"]
+via = "cairo"
+why = "The image's cairo links its Xlib surface; a headless R never opens a display."
+
+# COPYING: The Open Group's (MIT-open-group), DEC 1996 and HP 1994 (X11),
+# SGI, DEC/Olivetti and HP 1986 (HPND), NCD (HPND-sell-variant), Oracle
+# (MIT), and two notices for documentation (HPND-doc-sell, HPND-doc).
+[[dependency]]
+name = "libXext"
+version = "1.3.4"
+origin = "image"
+package = "libXext"
+package_version = "1.3.4-1.el8"
+srpm = { nvr = "libXext-1.3.4-1.el8", url = "https://vault.almalinux.org/8.10/AppStream/Source/Packages/libXext-1.3.4-1.el8.src.rpm", sha256 = "0870239f39e61999e2530c560710e3ee326161b1a168ce306c3d0ea59fdee97e" }
+license = "MIT-open-group AND X11 AND HPND AND HPND-sell-variant AND MIT AND HPND-doc-sell AND HPND-doc"
+license_files = ["/usr/share/doc/libXext/COPYING"]
+sonames = ["libXext.so.6"]
+via = "cairo"
+why = "The image's cairo links it with libX11."
+
+[[dependency]]
+name = "libXrender"
+version = "0.9.10"
+origin = "image"
+package = "libXrender"
+package_version = "0.9.10-8.el8_10"
+srpm = { nvr = "libXrender-0.9.10-8.el8_10", url = "https://vault.almalinux.org/8.10/AppStream/Source/Packages/libXrender-0.9.10-8.el8_10.src.rpm", sha256 = "fe02c07c0d4ca88548b79d3867df650933c2a9e6e86f50264d7ef0195e487eb2" }
+license = "HPND-sell-variant"
+license_files = ["/usr/share/doc/libXrender/COPYING"]
+sonames = ["libXrender.so.1"]
+via = "cairo"
+why = "The image's cairo links it for its Xlib surface."
+
+# No binary package ships libxcb's COPYING; it comes from the source RPM.
+[[dependency]]
+name = "libxcb"
+version = "1.13.1"
+origin = "image"
+package = "libxcb"
+package_version = "1.13.1-1.el8"
+srpm = { nvr = "libxcb-1.13.1-1.el8", url = "https://vault.almalinux.org/8.10/AppStream/Source/Packages/libxcb-1.13.1-1.el8.src.rpm", sha256 = "baa73f081a3752cedf538c6612583ef3dbfdea534a95537013b2555dddbf75e9" }
+license = "X11"
+license_files = ["srpm:libxcb-1.13.1.tar.bz2/libxcb-1.13.1/COPYING"]
+sonames = ["libxcb.so.1", "libxcb-render.so.0", "libxcb-shm.so.0"]
+via = "cairo"
+why = "libX11 and the image's cairo link it."
+
+[[dependency]]
+name = "libXau"
+version = "1.0.9"
+origin = "image"
+package = "libXau"
+package_version = "1.0.9-3.el8"
+srpm = { nvr = "libXau-1.0.9-3.el8", url = "https://vault.almalinux.org/8.10/AppStream/Source/Packages/libXau-1.0.9-3.el8.src.rpm", sha256 = "f9e5775417473caa6b5699171eec64253ef90473f36f0efe81d020b52a5de49a" }
+license = "MIT-open-group"
+license_files = ["/usr/share/doc/libXau/COPYING"]
+sonames = ["libXau.so.6"]
+via = "libxcb"
+why = "libxcb links it."
+
 # --- Shipped as files --------------------------------------------------------
 
+# LICENSE (in liberation-fonts-common): SIL OFL 1.1 "with Reserved Font
+# Name Liberation".
 [[dependency]]
 name = "liberation-sans-fonts"
 version = "2.00.3"
 origin = "image"
 package = "liberation-sans-fonts"
 package_version = "1:2.00.3-7.el8"
+srpm = { nvr = "liberation-fonts-2.00.3-7.el8", url = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages/liberation-fonts-2.00.3-7.el8.src.rpm", sha256 = "e10f1cdc74b6d88b8e63201e9c8ee4e3a4a7eee10ad3713a1db7703c4d21dbbd" }
 license = "OFL-1.1-RFN"
+license_files = ["/usr/share/licenses/liberation-fonts-common/LICENSE"]
 sonames = []
 why = "No library: scripts/build.py copies its four TrueType faces into the wheel for headless graphics (design §6.4); any 2.x has the Latin, Greek and Cyrillic glyphs, the euro sign among them."

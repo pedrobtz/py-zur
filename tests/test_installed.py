@@ -28,6 +28,7 @@ home print to stderr, so every check here starts R with ZUR_NO_CHECK=1,
 as a job comparing stderr would; the first-run checks remove it.
 """
 
+import json
 import os
 import re
 import shlex
@@ -1377,3 +1378,32 @@ def test_build_prefix_is_never_opened(tmp_path):
     assert any("libR.so" in c for c in calls)  # the trace saw R load
     opened = [c for c in calls if BUILD_PREFIX in c and "ENOENT" not in c]
     assert opened == []
+
+
+# Licences and build info (roadmap stage 13, design §14) ----------------------
+
+
+def test_installed_tool_carries_its_licences(r_home):
+    # uv installs the .dist-info's licenses/ (PEP 639) next to the
+    # runtime's own copy; METADATA names the expression BUILD-INFO.json
+    # records, and R's own licence is the GPL-2 text R ships.
+    runtime = r_home.parent.parent
+    (dist_info,) = runtime.parents[1].glob("zur-*.dist-info")
+    info = json.loads((runtime / "BUILD-INFO.json").read_text())
+    meta = (dist_info / "METADATA").read_text()
+    assert f"License-Expression: {info['license_expression']}\n" in meta
+    ours = {
+        p.relative_to(runtime / "licenses").as_posix(): p.read_bytes()
+        for p in (runtime / "licenses").rglob("*")
+        if p.is_file()
+    }
+    theirs = {
+        p.relative_to(dist_info / "licenses").as_posix(): p.read_bytes()
+        for p in (dist_info / "licenses").rglob("*")
+        if p.is_file()
+    }
+    assert ours == theirs
+    files = re.findall(r"^License-File: (.+)$", meta, flags=re.M)
+    assert sorted(files) == sorted(ours)
+    assert ours["r/COPYING"] == (r_home / "doc/COPYING").read_bytes()
+    assert re.search(rb"GNU GENERAL PUBLIC LICENSE\s+Version 2,", ours["r/COPYING"])
