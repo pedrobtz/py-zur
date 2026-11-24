@@ -685,9 +685,7 @@ def license_expression(info):
     """The wheel's licence expression: R's, zur's and every dependency's
     licence ANDed, each term once, in that order (design §14, D21)."""
     expressions = [info["inputs"]["r"]["license"], info["zur"]["license"]]
-    expressions += [
-        d["license"] for d in info["inputs"]["dependencies"] if "fonts" not in d["name"]
-    ]
+    expressions += [d["license"] for d in info["inputs"]["dependencies"]]
     terms = []
     for expression in expressions:
         for term in split_and(expression):
@@ -733,12 +731,13 @@ def finish_build_info(runtime, version, files):
     path = runtime / "BUILD-INFO.json"
     info = json.loads(path.read_text())
     for d in info["inputs"]["dependencies"]:
-        d["files"] = sorted(f for f in files.get(d["name"], []) if "xcb-shm" not in f)
+        d["files"] = sorted(files.get(d["name"], []))
         if d["name"] == FONT_ENTRY:
             d["files"] = [f"{R_HOME}/{FONTS_DIR}/{n}" for n in FONT_FILES]
     info["zur"] = {"version": version, "license": ZUR_LICENSE}
     info["license_expression"] = license_expression(info)
     info["licenses"] = f"zur/_runtime/{LICENSES}"
+    info["source_release"] = None
     path.write_text(json.dumps(info, indent=2) + "\n")
     return info
 
@@ -891,8 +890,6 @@ def pack(stage, out, version, tag, expression, license_files):
     dist_info = stage / f"zur-{version}.dist-info"
     dist_info.mkdir()
     shutil.copytree(package / "_runtime" / LICENSES, dist_info / LICENSES)
-    (dist_info / LICENSES / "extra").mkdir()
-    (dist_info / LICENSES / "extra/NOTE").write_text("not in METADATA\n")
     (dist_info / "METADATA").write_text(metadata(version, expression, license_files))
     (dist_info / "WHEEL").write_text(
         "Wheel-Version: 1.0\n"
@@ -1063,7 +1060,6 @@ def main(argv=None):
     dedupe(stage)
     info = finish_build_info(runtime, version, bundled)
     license_files = licenses(runtime, info)
-    shutil.rmtree(runtime / LICENSES / "pixman")
     print(f"licenses: {len(license_files)} files")
     print(f"License-Expression: {info['license_expression']}")
     left = build_paths(stage, [prefix, deps])
