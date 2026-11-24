@@ -545,11 +545,14 @@ def test_pak_data_table_uses_the_hosts_openmp(binary_set):
 @on_ubuntu
 def test_pak_blas_user_maps_rs_blas(binary_set, r_home):
     # D16: the package's libblas.so.3 and liblapack.so.3 are R's, from
-    # R.home("lib"), not a system BLAS.
+    # R.home("lib"), not a system BLAS. The kernel names the file after
+    # any symlink, so every BLAS or LAPACK library mapped is listed but
+    # R's own libRblas.so and libRlapack.so, which R itself loads.
     code = (
         "invisible(loadNamespace('RcppArmadillo'));"
         " m <- readLines('/proc/self/maps');"
-        " m <- m[grepl('/lib(blas|lapack)[.]so[.]3$', m)];"
+        " m <- m[grepl('/lib[^/]*(blas|lapack)[^/]*[.]so', m) &"
+        " !grepl('/libR(blas|lapack)[.]so$', m)];"
         " cat(unique(sub('^.* ', '', m)), sep = '\\n')"
     )
     mapped = {Path(p).resolve() for p in rscript(code).stdout.split()}
