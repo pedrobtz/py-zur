@@ -113,12 +113,23 @@ def scan():
     return json.loads(result.stdout)
 
 
-def test_compiler_runtimes_only_in_r_own_libraries():
-    found = scan()
-    # The scan must have read R's libraries, or finding nothing proves
+def test_scan_reads_r_own_libraries():
+    # Without this, the two checks below would pass on a scan that read
     # nothing: libR.so needs R's BLAS and the C library.
+    found = scan()
     assert {"libRblas.so", "libc.so.6"} <= set(found["lib/R/lib/libR.so"])
-    assert len(found) > 20
+    assert FORTRAN_USERS | {
+        "lib/R/bin/exec/R",
+        "lib/R/library/grDevices/libs/cairo.so",
+        "lib/R/modules/internet.so",
+    } <= set(found)
+
+
+def test_no_openmp_runtime():
+    found = scan()
     assert {p: n for p, n in found.items() if "libgomp.so.1" in n} == {}
-    users = {p for p, n in found.items() if FORTRAN_RUNTIME & set(n)}
-    assert users == FORTRAN_USERS
+
+
+def test_fortran_runtime_only_in_r_own_libraries():
+    found = scan()
+    assert {p for p, n in found.items() if FORTRAN_RUNTIME & set(n)} == FORTRAN_USERS
