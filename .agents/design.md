@@ -251,7 +251,9 @@ why the image's version is adequate or why it is built. Decided
   other; every tarball, R's included, is verified before any is
   unpacked.
 - R is configured with `CPPFLAGS` and `LDFLAGS` naming only
-  `/opt/zur-deps`, replacing `configure`'s default `/usr/local` paths:
+  `/opt/zur-deps`, and `PKG_CONFIG_PATH` naming only its `pkgconfig`,
+  replacing `configure`'s default `/usr/local` paths and the image's
+  `PKG_CONFIG_PATH=/usr/local/lib/pkgconfig`:
   the image keeps builds there that are no pinned input.
 
 ### 6.2 `configure`

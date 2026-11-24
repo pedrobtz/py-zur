@@ -35,7 +35,7 @@ build_openssl() {
 # bundle path is compiled in: OpenSSL's default store is the fallback,
 # and R passes CURL_CA_BUNDLE to libcurl when it is set (design §6.4).
 build_curl() {
-  LDFLAGS="-Wl,-rpath,$deps/lib" ./configure --prefix="$deps" \
+  PKG_CONFIG_PATH="$deps/lib/pkgconfig" LDFLAGS="-Wl,-rpath,$deps/lib" ./configure --prefix="$deps" \
     --with-openssl="$deps" --with-zlib \
     --enable-shared --disable-static \
     --without-libpsl --without-libidn2 --without-nghttp2 \

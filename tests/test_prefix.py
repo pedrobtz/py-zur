@@ -235,8 +235,9 @@ def test_manifest_names_every_library_r_links():
 
 
 def test_no_usr_local_paths():
-    # configure defaults to -I/usr/local/include and -L/usr/local/lib,
-    # where the image keeps builds that are no pinned input.
+    # configure defaults to -I/usr/local/include and -L/usr/local/lib, and
+    # the image sets PKG_CONFIG_PATH=/usr/local/lib/pkgconfig: the image
+    # keeps builds there that are no pinned input.
     for name in ["etc/Makeconf", "etc/ldpaths"]:
         lines = (PREFIX / "lib/R" / name).read_text().splitlines()
         assert [s for s in lines if "/usr/local" in s] == [], name

@@ -67,8 +67,11 @@ build() {
   # and -L/usr/local/lib: the image keeps its own builds there, which are
   # no pinned input (stage 4). The -L directory also becomes part of
   # R_LD_LIBRARY_PATH in etc/ldpaths, so R finds the libcurl built there;
-  # curl-config on PATH is that libcurl's.
-  PATH="$deps/bin:$PATH" CPPFLAGS="-I$deps/include" LDFLAGS="-L$deps/lib" \
+  # curl-config on PATH is that libcurl's. PKG_CONFIG_PATH replaces the
+  # image's /usr/local/lib/pkgconfig for the same reason; pkg-config still
+  # searches the system's own directories.
+  PATH="$deps/bin:$PATH" PKG_CONFIG_PATH="$deps/lib/pkgconfig" \
+    CPPFLAGS="-I$deps/include" LDFLAGS="-L$deps/lib" \
     LIBnn=lib ./configure --prefix="$prefix" \
     --enable-R-shlib --enable-memory-profiling \
     --without-x --without-tcltk --without-aqua \
