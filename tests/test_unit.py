@@ -2220,3 +2220,271 @@ def test_pack_puts_the_licences_in_the_dist_info(tmp_path):
         assert zf.read("zur-4.6.2.dist-info/licenses/r/COPYING") == b"GPL-2\n"
     assert "zur/_runtime/licenses/r/COPYING" in names
     assert "License-Expression: GPL-2.0-or-later\nLicense-File: r/COPYING\n" in meta
+
+
+# The source mirror (roadmap stage 14, design §14, D15) -------------------
+
+sources = load_module("zur_sources", REPO / "scripts/sources.py")
+
+
+def sources_py(*args):
+    return subprocess.run(
+        [sys.executable, str(REPO / "scripts/sources.py"), *map(str, args)],
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.fixture
+def mirror(tmp_path):
+    """A BUILD-INFO.json whose sources are local files, as a wheel too.
+
+    R's tarball, one built library's tarball, two entries built from one
+    source RPM, and one entry with no known source.
+    """
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    files = {
+        "R-4.6.2.tar.gz": b"R sources\n",
+        "curl-8.23.0.tar.xz": b"curl sources\n",
+        "gcc-8.5.0-31.el8_10.alma.1.src.rpm": b"gcc sources\n",
+    }
+    url, sha = {}, {}
+    for name, data in files.items():
+        (upstream / name).write_bytes(data)
+        url[name] = (upstream / name).as_uri()
+        sha[name] = hashlib.sha256(data).hexdigest()
+    gcc = "gcc-8.5.0-31.el8_10.alma.1.src.rpm"
+    srpm = {"kind": "srpm", "name": gcc[: -len(".src.rpm")]}
+    info = {
+        "inputs": {
+            "r": {"version": "4.6.2", "url": url["R-4.6.2.tar.gz"]},
+            "dependencies": [
+                {
+                    "name": "curl",
+                    "source": {
+                        "kind": "tarball",
+                        "url": url["curl-8.23.0.tar.xz"],
+                        "sha256": sha["curl-8.23.0.tar.xz"],
+                    },
+                },
+                {
+                    "name": "libgfortran",
+                    "source": {**srpm, "url": url[gcc], "sha256": sha[gcc]},
+                },
+                {
+                    "name": "libquadmath",
+                    "source": {**srpm, "url": url[gcc], "sha256": sha[gcc]},
+                },
+                {"name": "mystery", "source": None, "reason": "r", "looked_in": "l"},
+            ],
+        },
+        "zur": {"version": "4.6.2"},
+        "source_release": "https://github.com/pedrobtz/py-zur/releases/tag/v4.6.2",
+    }
+    info["inputs"]["r"]["sha256"] = sha["R-4.6.2.tar.gz"]
+
+    def write(info, name="BUILD-INFO.json"):
+        (tmp_path / name).write_text(json.dumps(info))
+        return tmp_path / name
+
+    write(info)
+    wheel = tmp_path / "zur-4.6.2-py3-none-any.whl"
+    with build.zipfile.ZipFile(wheel, "w") as zf:
+        zf.writestr("zur/_runtime/BUILD-INFO.json", json.dumps(info))
+    return {
+        "info": info,
+        "path": tmp_path / "BUILD-INFO.json",
+        "wheel": wheel,
+        "files": files,
+        "sha": sha,
+        "write": write,
+        "tmp": tmp_path,
+    }
+
+
+def test_sources_map_every_entry_to_one_asset(mirror):
+    # Each entry with a source maps to exactly the asset its URL names, R's
+    # tarball included; entries of one source RPM share it; a null source
+    # has none.
+    got = sources.assets([mirror["info"]])
+    assert {n: a["owners"] for n, a in got.items()} == {
+        "R-4.6.2.tar.gz": ["r"],
+        "curl-8.23.0.tar.xz": ["curl"],
+        "gcc-8.5.0-31.el8_10.alma.1.src.rpm": ["libgfortran", "libquadmath"],
+    }
+    assert {n: a["sha256"] for n, a in got.items()} == mirror["sha"]
+
+
+def test_sources_of_the_committed_manifest():
+    # Stage 13's count: 3 tarballs, 22 distinct source RPMs for 23 image
+    # entries (gcc's gives libgfortran and libquadmath), and R's tarball.
+    info = deps.build_info(
+        deps.load(), REPO / "scripts/linux/r-source", REPO / "scripts/linux/image"
+    )
+    got = sources.assets([info])
+    entries = info["inputs"]["dependencies"]
+    assert len(got) == 26
+    for d in entries:
+        (name,) = [n for n, a in got.items() if d["name"] in a["owners"]]
+        assert got[name]["url"] == d["source"]["url"]
+        assert got[name]["sha256"] == d["source"]["sha256"]
+        assert d["source"]["url"].endswith("/" + name)
+    assert sorted(o for a in got.values() for o in a["owners"]) == sorted(
+        ["r"] + [d["name"] for d in entries]
+    )
+
+
+def test_sources_collect_writes_every_source_and_its_sha256(mirror):
+    out = mirror["tmp"] / "out"
+    result = sources_py("collect", out, mirror["wheel"])
+    assert result.returncode == 0, result.stderr
+    assert sorted(p.name for p in out.iterdir()) == sorted(
+        [*mirror["files"], "SHA256SUMS"]
+    )
+    for name, data in mirror["files"].items():
+        assert (out / name).read_bytes() == data
+    # sha256sum's own format, checked by sha256sum where there is one.
+    expected = "".join(
+        f"{hashlib.sha256(mirror['files'][n]).hexdigest()}  {n}\n"
+        for n in sorted(mirror["files"])
+    )
+    assert (out / "SHA256SUMS").read_text() == expected
+    if shutil.which("sha256sum"):
+        check = subprocess.run(
+            ["sha256sum", "-c", "SHA256SUMS"], cwd=out, capture_output=True
+        )
+        assert check.returncode == 0
+    assert sources_py("verify", out, mirror["path"]).returncode == 0
+
+
+def test_sources_collect_refuses_a_mismatched_hash_with_its_name(mirror):
+    info = mirror["info"]
+    for d in info["inputs"]["dependencies"][1:3]:
+        d["source"]["sha256"] = "0" * 64
+    out = mirror["tmp"] / "out"
+    result = sources_py("collect", out, mirror["write"](info))
+    assert result.returncode == 1
+    assert (
+        "libgfortran, libquadmath: SHA-256 mismatch for "
+        "gcc-8.5.0-31.el8_10.alma.1.src.rpm" in result.stderr
+    )
+    assert not (out / "gcc-8.5.0-31.el8_10.alma.1.src.rpm").exists()
+    assert not (out / "SHA256SUMS").exists()
+
+
+def test_sources_collect_refuses_a_missing_source_with_its_name(mirror):
+    (mirror["tmp"] / "upstream/curl-8.23.0.tar.xz").unlink()
+    result = sources_py("collect", mirror["tmp"] / "out", mirror["path"])
+    assert result.returncode == 1
+    assert "curl: download of curl-8.23.0.tar.xz failed" in result.stderr
+
+
+def test_sources_refuse_two_sources_under_one_name(mirror):
+    info = mirror["info"]
+    info["inputs"]["dependencies"][2]["source"]["sha256"] = "1" * 64
+    with pytest.raises(
+        sources.Refused,
+        match=r"^gcc-8\.5\.0-31\.el8_10\.alma\.1\."
+        r"src\.rpm: libgfortran and libquadmath name different",
+    ):
+        sources.assets([info])
+
+
+@pytest.mark.parametrize("name", ["SHA256SUMS", "a+b.tar.gz", ".hidden"])
+def test_sources_refuse_an_asset_name_github_would_change(mirror, name):
+    info = mirror["info"]
+    info["inputs"]["dependencies"][0]["source"]["url"] = f"https://example.org/{name}"
+    with pytest.raises(sources.Refused, match="^curl: .* gives no usable asset name"):
+        sources.assets([info])
+
+
+def test_sources_collect_merges_the_releases_sums(mirror):
+    out = mirror["tmp"] / "out"
+    other = "f" * 64
+    old = mirror["tmp"] / "old"
+    old.write_text(f"{other}  R-4.6.2-arm64.pkg\n")
+    assert sources_py("collect", out, mirror["path"], "--merge", old).returncode == 0
+    sums = sources.read_sums(out / "SHA256SUMS")
+    assert sums["R-4.6.2-arm64.pkg"] == other
+    assert set(sums) == {*mirror["files"], "R-4.6.2-arm64.pkg"}
+    # The same name with another SHA-256 is refused, naming it.
+    old.write_text(f"{other}  curl-8.23.0.tar.xz\n")
+    result = sources_py("collect", out, mirror["path"], "--merge", old)
+    assert result.returncode == 1
+    assert "curl: curl-8.23.0.tar.xz has SHA-256" in result.stderr
+
+
+@pytest.fixture
+def collected(mirror):
+    out = mirror["tmp"] / "out"
+    sources.collect(out, [mirror["info"]])
+    return out
+
+
+def test_sources_verify_refuses_a_changed_asset(mirror, collected):
+    (collected / "curl-8.23.0.tar.xz").write_bytes(b"not curl\n")
+    result = sources_py("verify", collected, mirror["wheel"])
+    assert result.returncode == 1
+    assert "curl-8.23.0.tar.xz: SHA-256 mismatch" in result.stderr
+
+
+def test_sources_verify_refuses_a_missing_asset(mirror, collected):
+    (collected / "R-4.6.2.tar.gz").unlink()
+    result = sources_py("verify", collected, mirror["wheel"])
+    assert result.returncode == 1
+    assert "R-4.6.2.tar.gz: in SHA256SUMS, no such asset" in result.stderr
+
+
+def test_sources_verify_refuses_a_source_not_in_the_sums(mirror, collected):
+    sums = sources.read_sums(collected / "SHA256SUMS")
+    del sums["gcc-8.5.0-31.el8_10.alma.1.src.rpm"]
+    sources.write_sums(collected / "SHA256SUMS", sums)
+    result = sources_py("verify", collected, mirror["wheel"])
+    assert result.returncode == 1
+    assert (
+        "libgfortran, libquadmath: source gcc-8.5.0-31.el8_10.alma.1.src.rpm "
+        "not in SHA256SUMS" in result.stderr
+    )
+    assert "gcc-8.5.0-31.el8_10.alma.1.src.rpm: asset not in SHA256SUMS" in (
+        result.stderr
+    )
+
+
+def test_sources_verify_refuses_a_source_with_another_hash(mirror, collected):
+    info = mirror["info"]
+    info["inputs"]["dependencies"][0]["source"]["sha256"] = "2" * 64
+    result = sources_py("verify", collected, mirror["write"](info))
+    assert result.returncode == 1
+    assert "curl: source curl-8.23.0.tar.xz has SHA-256 " + "2" * 64 in result.stderr
+
+
+def test_sources_tag_is_the_version_its_wheels_name(mirror):
+    result = sources_py("tag", mirror["wheel"], mirror["path"])
+    assert (result.returncode, result.stdout) == (0, "v4.6.2\n")
+    info = mirror["info"]
+    info["source_release"] = None
+    result = sources_py("tag", mirror["write"](info))
+    assert result.returncode == 1
+    assert "source_release is None, not https://github.com/pedrobtz/py-zur/" in (
+        result.stderr
+    )
+    info["zur"]["version"] = "4.6.2.post1"
+    info["source_release"] = sources.release_url("4.6.2.post1")
+    result = sources_py("tag", mirror["wheel"], mirror["write"](info, "b.json"))
+    assert result.returncode == 1
+    assert "the wheels have versions 4.6.2, 4.6.2.post1" in result.stderr
+
+
+def test_build_info_names_the_source_release(tmp_path):
+    # build.py and sources.py agree on the release's URL (design §14).
+    (tmp_path / "BUILD-INFO.json").write_text(
+        json.dumps(
+            {"inputs": {"r": {"license": "GPL-2.0-or-later"}, "dependencies": []}}
+        )
+    )
+    info = build.finish_build_info(tmp_path, "4.6.2.post1", {})
+    assert info["source_release"] == (
+        "https://github.com/pedrobtz/py-zur/releases/tag/v4.6.2.post1"
+    )
+    assert info["source_release"] == sources.release_url("4.6.2.post1")

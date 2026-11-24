@@ -545,7 +545,7 @@ def test_license_expression_is_every_entrys(metadata, build_info):
 
 def test_build_info_names_every_source(build_info):
     # Each entry's corresponding source: tarball or source RPM with URL
-    # and SHA-256, or null with a reason; the release stage 14 fills.
+    # and SHA-256, or null with a reason; and the release holding them.
     for d in build_info["inputs"]["dependencies"]:
         source = d["source"]
         if source is None:
@@ -559,4 +559,7 @@ def test_build_info_names_every_source(build_info):
     assert build_info["inputs"]["r"]["license"] == "GPL-2.0-or-later"
     assert build_info["zur"] == {"version": R_VERSION, "license": "GPL-2.0-or-later"}
     assert build_info["licenses"] == f"{RUNTIME}/licenses"
-    assert "source_release" in build_info and build_info["source_release"] is None
+    # The release scripts/sources.py mirrors the sources to (stage 14).
+    assert build_info["source_release"] == (
+        f"https://github.com/pedrobtz/py-zur/releases/tag/v{R_VERSION}"
+    )
