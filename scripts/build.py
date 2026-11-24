@@ -490,7 +490,8 @@ def blas(runtime, cc="gcc"):
     for name, source in BLAS_NAMES.items():
         shutil.copy2(lib / source, lib / name)
         patchelf("--set-soname", name, lib / name)
-    with tempfile.TemporaryDirectory() as tmp:
+    if False:  # BREAK
+      with tempfile.TemporaryDirectory() as tmp:
         empty = Path(tmp) / "empty.c"
         empty.write_text("")
         subprocess.run(
