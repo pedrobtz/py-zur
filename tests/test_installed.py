@@ -603,13 +603,16 @@ def test_help_page_of_lm_is_found():
 
 
 def test_no_vignettes():
-    # Unpruned, stats has the "reshape" vignette, grid, parallel and utils
-    # theirs (library/*/doc).
+    # A source build without `make vignettes` writes no Meta/vignette.rds,
+    # so vignette() lists none even before the prune; the vignettes
+    # themselves (grid's, parallel's, stats' "reshape", utils' "Sweave")
+    # are the PDFs in library/*/doc.
     out = rout(
         'nrow(vignette(package = "stats")$results),'
-        f" nrow(vignette(package = {BASE})$results)"
+        f" nrow(vignette(package = {BASE})$results),"
+        f' any(dir.exists(file.path(R.home("library"), {BASE}, "doc")))'
     )
-    assert out == "0 0"
+    assert out == "0 0 FALSE"
 
 
 def test_no_demos():
@@ -620,15 +623,19 @@ def test_no_demos():
 def test_messages_are_english_without_translations():
     # gettext ignores LANGUAGE in the C locale, so the check runs in
     # C.UTF-8 and first shows that locale is in effect; with R's
-    # translations, the warning would be "NaNs wurden erzeugt".
+    # translations, the warning would be "NaNs wurden erzeugt". Ubuntu
+    # 24.04's glibc ignores LANGUAGE in C.UTF-8 too, so the catalogs'
+    # absence from the directory R binds them to is checked as well.
     env = without("LC_ALL", "LC_MESSAGES") | {"LANG": "C.UTF-8", "LANGUAGE": "de"}
     result = rscript(
         'cat(Sys.getlocale("LC_MESSAGES"),'
-        " tryCatch(log(-1), warning = conditionMessage), sep = '\\n')",
+        " tryCatch(log(-1), warning = conditionMessage),"
+        ' length(list.files(bindtextdomain("R"), "[.]mo$", recursive = TRUE)),'
+        f' length(list.files(file.path(R.home("library"), {BASE}, "po"))),'
+        " sep = '\\n')",
         env=env,
     )
-    assert result.stdout.splitlines() == ["C.UTF-8", "NaNs produced"]
-    assert not (Path(rout("R.home()")) / "library/translations").exists()
+    assert result.stdout.splitlines() == ["C.UTF-8", "NaNs produced", "0", "0"]
 
 
 def test_headers_are_kept(r_home):
