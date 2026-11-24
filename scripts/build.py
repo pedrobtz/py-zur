@@ -298,6 +298,13 @@ def relocate_makeconf(path, prefix, deps):
         text,
         flags=re.M,
     )
+    # TEMPORARY (stage 10, seen to fail): undo the per-host choices.
+    text = text.replace(f"{CXXSTD_PROBE}\nCXX = g++ -std=$(ZUR_CXXSTD)", "CXX = g++ -std=gnu++20")
+    text = re.sub(r"^CC = gcc$", "CC = gcc -std=gnu23", text, flags=re.M)
+    text = text.replace("CXX20STD = -std=gnu++20", "CXX20STD = -std=gnu++17")
+    text = text.replace("CXX26STD = -std=gnu++26", "CXX26STD = -std=gnu++23")
+    text = text.replace("SHLIB_OPENMP_CFLAGS = -fopenmp", "SHLIB_OPENMP_CFLAGS =")
+    text = re.sub(r"^FC = gfortran$", "FC = gfortran -ffixed-form", text, flags=re.M)
     path.write_text(text.replace(prefix, "$(R_HOME)/../.."))
 
 
