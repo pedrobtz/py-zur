@@ -97,10 +97,6 @@ jobs:
       - name: Upload to the release
         run: |
           start=$(date +%s)
-          # TEMPORARY (#15): a changed asset, and a source left out.
-          echo corrupt >> mirror/curl-8.23.0.tar.xz
-          grep -v ' zlib-' mirror/SHA256SUMS > sums.tmp && mv sums.tmp mirror/SHA256SUMS
-          rm mirror/zlib-*.src.rpm
           if [ "$DRAFT" = true ]; then
             gh release upload "$TAG" mirror/* --clobber
           else
