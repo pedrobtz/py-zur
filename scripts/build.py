@@ -137,7 +137,7 @@ export RHOME
 ## zur (design §6.4): CA certificates from the system, each variable
 ## only when the user has not set it.
 for zur_ca in /etc/ssl/certs/ca-certificates.crt \\
-  /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem \\
+  /etc/ssl/ca-bundle.pem \\
   /etc/pki/tls/cacert.pem /etc/ssl/cert.pem; do
   if test -r "${zur_ca}"; then
     if test -z "${CURL_CA_BUNDLE}"; then
@@ -286,6 +286,9 @@ def blas(runtime):
     for name, source in BLAS_NAMES.items():
         shutil.copy2(lib / source, lib / name)
         patchelf("--set-soname", name, lib / name)
+    # TEMPORARY break (#6): R's LAPACK module uses the LAPACK copy.
+    lapack = runtime / "lib/R/modules/lapack.so"
+    patchelf("--replace-needed", "libRlapack.so", "liblapack.so.3", lapack)
 
 
 # 3. repair -------------------------------------------------------------------
