@@ -421,7 +421,9 @@ jobs:
       - name: The BLAS shim with the host's flexiblas
         if: matrix.case == 'rockylinux-9'
         run: |
-          dnf install -y flexiblas
+          # The flexiblas package alone ships no library; ask for the file.
+          dnf install -y flexiblas 'libflexiblas.so.3()(64bit)'
+          rpm -qf /usr/lib64/libflexiblas.so.3
           ZUR_PAK=1 ZUR_FLEXIBLAS=present uv run pytest -v tests/test_installed.py -k flexiblas
 
   # Full profile. Every job here has `needs: profile` and
