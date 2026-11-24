@@ -408,7 +408,9 @@ with nothing pointing at the build.
   the same length under `/proc/0`, so no member names the build prefix.
   `$R_HOME/bin/Rscript` started without `RHOME` therefore fails; the
   launcher and `bin/R` always set it. Stages 6 and 7 start R that way
-  and need `Rscript` to find its home on its own.
+  and need `Rscript` to find its home on its own. Resolved 2026-11-24 in
+  stage 6 (decision on #7): `bin/Rscript` is a script that sets `RHOME`
+  from its own location, and nothing else sets it (design §5, D13).
 - `CC` is exactly `gcc`: configure's `-std=gnu23` is rejected by the
   containers' gcc 8, 12 and 13 (design §6.3). `CXX` and `FC` keep their
   standard flag after the plain name, and the check accepts only `-std=`
@@ -475,6 +477,30 @@ no `which`, and the environment it needs lives in R's own files.
 **Exit criteria.**
 - Every **Tests.** line exists and was seen to fail.
 - Quick profile green in all five containers.
+
+**Deviations.** 2026-11-24:
+- The decision on [#7](https://github.com/pedrobtz/py-zur/issues/7)
+  was implemented first: `bin/Rscript` and `lib/R/bin/Rscript` are shell
+  scripts that set `RHOME` from their location and run the compiled
+  `bin/exec/Rscript`; `bin/R` and the launcher no longer set `RHOME`.
+  The scripts also drop an inherited `R_HOME`, which the decision's
+  test with `R_HOME=/nonexistent/R` needs: `bin/R` otherwise prints its
+  warning about it on stdout (design §5).
+- `which`: configure's `WHICH` is the shell's `command -v`; `Sys.which`
+  of a name that is also a shell builtin returns `""` (design §6.4).
+- The font is a pinned "image" entry of `manifests/linux.toml`
+  (`liberation-sans-fonts`, no sonames), not a fetched file.
+- The PDF check draws with `encoding = "CP1252"`: `pdf()`'s default
+  encoding has no euro sign, and the check requires empty stderr.
+- The minimal images get only what the workflow needs (`tar` and `gzip`
+  on Rocky, nothing on Debian before its CA bundle), so the source
+  package and `strace` tests skip there and run in the other three.
+- Added tests beyond the stage's list: what each minimal image lacks
+  (so the checks there test what they claim); `Sys.which` of a missing
+  name; `--with-internal-tzcode` in `Makeconf`'s configure call and the
+  shipped zoneinfo; the font files and `fonts.conf` in the wheel; a
+  user's `FONTCONFIG_FILE` wins; empty stderr from every graphics
+  device.
 
 **Design.** [§6.4](design.md#64-runtime-files-a-headless-container-lacks),
 [§13](design.md#13-how-it-is-tested) (graphics, network and data,
@@ -1099,7 +1125,8 @@ installed on it with `installer`.
   `R.app`, `*.dSYM`, manuals, vignettes, `tests/`, `demo/`,
   translations), and make the text edits of [§7](design.md#7-macos-crans-binaries-unmodified):
   `bin/R` takes `R_HOME` from its location and exports
-  `DYLD_LIBRARY_PATH` and `RHOME`, `Renviron` loses the framework path,
+  `DYLD_LIBRARY_PATH`, `bin/Rscript` becomes the script that sets
+  `RHOME` (design §5, 2026-11-24), `Renviron` loses the framework path,
   `Makeconf` links `-L"$(R_HOME)/lib" -lR`. Library links become
   copies. No Mach-O file is changed.
 - The wheel tag from the binaries' `LC_BUILD_VERSION`.
