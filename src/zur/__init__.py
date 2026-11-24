@@ -32,6 +32,7 @@ def environment(base=None):
 
 def _exec(name):
     exe = R_HOME / "bin" / name
+    os.dup2(os.open(os.devnull, os.O_RDONLY), 0)  # TEMPORARY break (#6)
     os.execve(exe, [name, *sys.argv[1:]], environment())
 
 
