@@ -553,12 +553,13 @@ R_HOME = "zur/_runtime/lib/R"
 PRUNE = [
     f"{R_HOME}/doc/manual",  # the manuals, HTML and PDF
     f"{R_HOME}/doc/*.pdf",  # NEWS.pdf
-    f"{R_HOME}/library/*/doc",  # vignettes
-    f"{R_HOME}/library/*/demo",
     f"{R_HOME}/library/*/tests",
     f"{R_HOME}/tests",
-    f"{R_HOME}/library/translations",  # message catalogs (D19)
     f"{R_HOME}/library/*/po",
+    # TEMPORARY (#10): breaks the prune checks.
+    f"{R_HOME}/library/*/help",
+    f"{R_HOME}/include/R.h",
+    "zur.libs/libcairo-*",
 ]
 
 
@@ -723,7 +724,7 @@ PYPI_MAX_FILE_SIZE = 100 * 1024 * 1024
 def check_size(wheel, max_size=PYPI_MAX_FILE_SIZE):
     """Fail when ``wheel`` is larger than ``max_size`` bytes (design §10)."""
     size = wheel.stat().st_size
-    if size > max_size:
+    if size >= max_size:  # TEMPORARY (#10)
         raise SystemExit(
             f"{wheel.name}: {size} bytes, over the limit of {max_size} bytes "
             f"by {size - max_size}"
