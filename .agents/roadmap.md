@@ -23,7 +23,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | [#5](https://github.com/pedrobtz/py-zur/issues/5) | [#29](https://github.com/pedrobtz/py-zur/pull/29) | 2026-11-24 |
 | 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | [#30](https://github.com/pedrobtz/py-zur/pull/30) | 2026-11-24 |
 | 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | [#31](https://github.com/pedrobtz/py-zur/pull/31) | 2026-11-24 |
-| 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | | |
+| 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | [#32](https://github.com/pedrobtz/py-zur/pull/32) | 2026-11-24 |
 | 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | | |
 | 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | [#10](https://github.com/pedrobtz/py-zur/issues/10) | | |
 | 10 | [Source packages across host compilers](#stage-10--source-packages-across-host-compilers) | full | [#11](https://github.com/pedrobtz/py-zur/issues/11) | | |
@@ -75,7 +75,10 @@ R package profiles are replaced by two of its own, both in
   `build-linux-x86_64` 3 min 57 s (R 147 s) and each container about
   35 to 55 s
   ([run](https://github.com/pedrobtz/py-zur/actions/runs/45310120781)),
-  well under the target.
+  well under the target. With the five containers and fontconfig built
+  (stage 6, 2026-11-24): 6 min 25 s from start to the last job, of which
+  `build-linux-x86_64` 5 min 21 s and each container 26 to 62 s
+  ([run](https://github.com/pedrobtz/py-zur/actions/runs/45322716078)).
 - **full** (`full-ci` label, weekly schedule, dispatch, and every run of
   the release workflow): quick, plus the host compiler matrix of stage
   10, plus every other platform leg that exists by then: Linux aarch64
@@ -569,6 +572,36 @@ distribution, unless the user chose another (D10).
 **Exit criteria.**
 - Every **Tests.** line exists and was seen to fail.
 - Quick profile green.
+
+**Deviations.** 2026-11-24:
+- The shared-home and read-only-home tests run in a job of their own,
+  `home-linux-x86_64`, on the runner: they start plain `ubuntu:24.04`
+  and `rockylinux:8` containers with `docker run`, R as
+  `_runtime/bin/Rscript` from the unpacked wheel (without the launcher,
+  so without uv or Python in the container), as the runner's user, the
+  home bind-mounted (`:ro` for the read-only case). The matrix
+  containers run as root, which writes any directory, so a read-only
+  home cannot be made there.
+- The readings beyond this stage's note, from the os-release
+  specification's defaults, are in design §5: no `ID` is `linux`, no
+  `VERSION_ID` is left out, a value outside `[A-Za-z0-9._-]` counts as
+  missing, and with `HOME` unset or empty `bin/R` sets nothing.
+- The reinstall check also runs `uv tool uninstall zur` and installs
+  the wheel again: uv's `--reinstall` keeps files the wheel did not
+  install, so it alone cannot fail for a library inside the tool's
+  directory (design D10, measured 2026-11-24); a deleted file of the
+  wheel coming back shows the reinstall happened.
+- `<arch>` is the wheel's, written into `bin/R` by the build, not
+  `uname -m`; `/etc/os-release` is read by the shell without running it
+  or forking, so `bin/R` starts no new process when the library exists.
+- `etc/Renviron` is unchanged: R's own `R_LIBS_USER=${R_LIBS_USER:-'%U'}`
+  keeps the value; the build refuses an `Renviron` without that line.
+- Added tests beyond the stage's list: `bin/R`'s reading of
+  `os-release` in `tests/test_unit.py` (the three containers' files,
+  quotes, a last line without newline, no `ID`, no `VERSION_ID`, bad
+  values, no file) under `sh`, `dash` and `bash`, compared with sourcing
+  the file; an empty `R_LIBS_USER`; no `HOME`; an unwritable home; the
+  `Renviron` refusal.
 
 **Design.** [§5](design.md#5-wheel-layout-and-launcher), [§15 D10, D13](design.md#15-decisions).
 

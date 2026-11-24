@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -477,7 +478,7 @@ def front_end(tmp_path, where):
     (tmp_path / "runtime/lib/R").mkdir(parents=True, exist_ok=True)
     path.write_text(FRONT_END)
     build.relocate_front_end(
-        path, "/opt/zur", ".." if where == "lib/R/bin/R" else "../lib/R"
+        path, "/opt/zur", ".." if where == "lib/R/bin/R" else "../lib/R", "4.6.2"
     )
     return path
 
@@ -532,6 +533,183 @@ def test_front_end_keeps_the_users_fontconfig_file(tmp_path):
     result = sh(f'sh "{path}"', env=env)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().split("|")[-1] == "/my/fonts.conf"
+
+
+# User library (design §5, D10) -------------------------------------------------
+
+# /etc/os-release of the quick profile's containers, as the images ship
+# them (fields bin/R does not read trimmed), and the edge cases.
+UBUNTU = """\
+PRETTY_NAME="Ubuntu 24.04.3 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+VERSION="24.04.3 LTS (Noble Numbat)"
+VERSION_CODENAME=noble
+ID=ubuntu
+ID_LIKE=debian
+HOME_URL="https://www.ubuntu.com/"
+"""
+DEBIAN = """\
+PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+NAME="Debian GNU/Linux"
+VERSION_ID="12"
+VERSION="12 (bookworm)"
+VERSION_CODENAME=bookworm
+ID=debian
+"""
+ROCKY = """\
+NAME="Rocky Linux"
+VERSION="8.10 (Green Obsidian)"
+ID="rocky"
+ID_LIKE="rhel centos fedora"
+VERSION_ID="8.10"
+PLATFORM_ID="platform:el8"
+PRETTY_NAME="Rocky Linux 8.10 (Green Obsidian)"
+REDHAT_SUPPORT_PRODUCT_VERSION="8.10"
+"""
+OS_RELEASES = {
+    "ubuntu": (UBUNTU, "x86_64-ubuntu-24.04"),
+    "debian": (DEBIAN, "x86_64-debian-12"),
+    "rocky": (ROCKY, "x86_64-rocky-8.10"),
+    # The last line without its newline is still read.
+    "no final newline": ("ID=alpine\nVERSION_ID=3.20.3", "x86_64-alpine-3.20.3"),
+    "single quotes": ("ID='alpine'\nVERSION_ID='3.20.3'\n", "x86_64-alpine-3.20.3"),
+    # Rolling releases have no VERSION_ID: it is left out.
+    "no VERSION_ID": ('ID=arch\nBUILD_ID=rolling\nNAME="Arch Linux"\n', "x86_64-arch"),
+    # The specification's default ID is "linux".
+    "no ID": ('NAME="Some Linux"\nVERSION_ID=1.0\n', "x86_64-linux-1.0"),
+    # Outside [A-Za-z0-9._-] a value counts as missing, so no path escapes.
+    "bad values": ('ID="../../tmp"\nVERSION_ID="1 2"\n', "x86_64-linux"),
+    "no file": (None, "x86_64-linux"),
+}
+SHELLS = [s for s in ("sh", "dash", "bash") if shutil.which(s)]
+PRINT_LIBS = 'echo "${R_LIBS_USER-unset}"'
+
+
+def library_front_end(tmp_path, os_release):
+    """bin/R reading ``os_release`` (text, or None for no file)."""
+    path = front_end(tmp_path, "bin/R")
+    release = tmp_path / "os-release"
+    if os_release is not None:
+        release.write_text(os_release)
+    text = path.read_text()
+    assert text.count("/etc/os-release") == 3  # the comment, test -r, done <
+    path.write_text(
+        text.replace("/etc/os-release", str(release)).replace(
+            'exec "${R_HOME}/bin/exec/R" "$@"', PRINT_LIBS
+        )
+    )
+    return path
+
+
+def libs(shell, path, **env):
+    result = subprocess.run(
+        [shell, str(path)],
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ["PATH"], **env},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    return result.stdout.strip()
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("case", OS_RELEASES)
+def test_front_end_user_library_names_the_distribution(tmp_path, case, shell):
+    os_release, platform = OS_RELEASES[case]
+    path = library_front_end(tmp_path, os_release)
+    home = tmp_path / "home"
+    home.mkdir()
+    library = home / f"R/zur/{platform}/4.6"
+    assert libs(shell, path, HOME=str(home)) == str(library)
+    assert library.is_dir()
+    # The second start finds it and changes nothing.
+    assert libs(shell, path, HOME=f"{home}/") == str(library)
+
+
+@pytest.mark.parametrize("case", ["ubuntu", "debian", "rocky"])
+def test_user_library_platform_matches_sourcing_os_release(tmp_path, case):
+    # A second reader: os-release is a shell fragment, so sourcing it is
+    # the specification's own reading; bin/R reads it without running it.
+    os_release, platform = OS_RELEASES[case]
+    path = library_front_end(tmp_path, os_release)
+    sourced = subprocess.run(
+        ["sh", "-c", '. "$1" && printf "%s-%s" "$ID" "$VERSION_ID"', "sh",
+         str(tmp_path / "os-release")],
+        capture_output=True, text=True, check=True,
+    ).stdout  # fmt: skip
+    assert platform == f"x86_64-{sourced}"
+    assert libs("sh", path, HOME=str(tmp_path)).split("/")[-2] == platform
+
+
+@pytest.mark.parametrize("value", ["/my/lib", "/my/lib:/other/lib"])
+def test_front_end_keeps_the_users_library(tmp_path, value):
+    path = library_front_end(tmp_path, UBUNTU)
+    assert libs("sh", path, HOME=str(tmp_path), R_LIBS_USER=value) == value
+    assert not (tmp_path / "R").exists()
+
+
+def test_front_end_treats_an_empty_library_as_unset(tmp_path):
+    # As etc/Renviron's ${R_LIBS_USER:-...} does.
+    path = library_front_end(tmp_path, UBUNTU)
+    out = libs("sh", path, HOME=str(tmp_path), R_LIBS_USER="")
+    assert out == f"{tmp_path}/R/zur/x86_64-ubuntu-24.04/4.6"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes a read-only home")
+@pytest.mark.parametrize("shell", SHELLS)
+def test_front_end_starts_with_a_read_only_home(tmp_path, shell):
+    path = library_front_end(tmp_path, UBUNTU)
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o555)
+    try:
+        out = libs(shell, path, HOME=str(home))  # exit 0, empty stderr
+    finally:
+        home.chmod(0o755)
+    assert out == f"{home}/R/zur/x86_64-ubuntu-24.04/4.6"
+    assert list(home.iterdir()) == []
+
+
+def test_front_end_without_home_leaves_the_library_to_r(tmp_path):
+    path = library_front_end(tmp_path, UBUNTU)
+    assert libs("sh", path) == "unset"
+    assert libs("sh", path, HOME="") == "unset"
+
+
+def test_user_library_arch_and_minor_version():
+    assert build.ARCH == "x86_64"
+    text = build.front_end_zur("4.6.2")
+    assert '/R/zur/x86_64-${zur_id}${zur_version_id}/4.6"' in text
+    assert "@" not in text.replace("${@}", "")
+    with pytest.raises(SystemExit, match="no major.minor"):
+        build.front_end_zur("4")
+
+
+RENVIRON = """\
+R_PAPERSIZE_USER=${R_PAPERSIZE}
+R_LIBS_USER=${R_LIBS_USER:-'%U'}
+R_LIBS_SITE=${R_LIBS_SITE:-'%S'}
+EDITOR=${EDITOR-${VISUAL-vi}}
+R_BROWSER=${R_BROWSER-'/opt/zur/bin/xdg-open'}
+"""
+
+
+def test_renviron_keeps_the_users_library(tmp_path):
+    path = tmp_path / "Renviron"
+    path.write_text(RENVIRON)
+    build.relocate_renviron(path, "/opt/zur")
+    text = path.read_text()
+    assert "\nR_LIBS_USER=${R_LIBS_USER:-'%U'}\n" in text
+    assert "/opt/zur" not in text
+
+
+def test_renviron_with_another_library_line_is_refused(tmp_path):
+    path = tmp_path / "Renviron"
+    path.write_text(RENVIRON.replace(":-'%U'", "-'%U'"))
+    with pytest.raises(SystemExit, match="R_LIBS_USER line changed upstream"):
+        build.relocate_renviron(path, "/opt/zur")
 
 
 # What the compiled Rscript would see, printed instead of starting R.
@@ -648,7 +826,7 @@ def test_front_end_without_its_expected_lines_is_refused(tmp_path):
     path = tmp_path / "R"
     path.write_text(FRONT_END.replace("R_HOME_DIR=/opt/zur/lib/R\n", ""))
     with pytest.raises(SystemExit, match="no R_HOME_DIR=/opt/zur/lib/R line"):
-        build.relocate_front_end(path, "/opt/zur", "..")
+        build.relocate_front_end(path, "/opt/zur", "..", "4.6.2")
 
 
 MAKECONF = """\

@@ -10,14 +10,20 @@ Every check compares against a known answer rather than only running code.
 Set ZUR_OFFLINE=1 to skip the network check. In CI, ZUR_CONTAINER names
 the image the tests run in (the matrix of build.yml), so the checks of
 what a minimal image lacks know where they are; ZUR_EXPECT_NO_CA_BUNDLE=1
-runs the no-bundle check, before the workflow installs one.
+runs the no-bundle check, before the workflow installs one. ZUR_WHEEL
+names the installed wheel, for the reinstall check. ZUR_DOCKER=1 runs
+the checks that start containers themselves (a shared and a read-only
+home), from a machine with Docker and ZUR_WHEEL; they need no
+installed zur.
 """
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import textwrap
+import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -215,6 +221,183 @@ def test_environment_is_the_same_without_the_launcher(r_home):
     assert fonts == str(r_home / "etc/fonts/fonts.conf")
     if any(Path(p).is_file() for p in CA_CANDIDATES):
         assert ca == ssl == CA_BUNDLES[os_release_id()]
+
+
+# User library (design §5, D10) ---------------------------------------------
+
+R_MINOR = ".".join(R_VERSION.split(".")[:2])
+
+# What /etc/os-release's ID-VERSION_ID is in each image of the matrix.
+# Rocky's minor release moves with the image, so it is a pattern.
+PLATFORMS = {
+    "ubuntu:24.04": r"ubuntu-24\.04",
+    "debian:12": r"debian-12",
+    "debian:12-slim": r"debian-12",
+    "rockylinux:8": r"rocky-8\.\d+",
+    "rockylinux:8-minimal": r"rocky-8\.\d+",
+}
+# Sourcing os-release is the specification's own reading of it; bin/R
+# reads it without running it.
+SOURCE_OS_RELEASE = '(. /etc/os-release && printf "%s-%s\\n" "$ID" "$VERSION_ID")'
+
+
+def zur_library(home):
+    """Where zur's user library is for ``home`` on this machine."""
+    out = run(["sh", "-c", SOURCE_OS_RELEASE])
+    assert out.returncode == 0, out.stderr
+    platform = out.stdout.strip()
+    if CONTAINER:
+        assert re.fullmatch(PLATFORMS[CONTAINER], platform), platform
+    return home / "R/zur" / f"{os.uname().machine}-{platform}" / R_MINOR
+
+
+# R through the launcher, and as $R_HOME/bin/Rscript without it (D13).
+STARTS = ["launcher", "bare"]
+
+
+def start_rscript(r_home, how, code, env):
+    exe = "Rscript" if how == "launcher" else str(r_home / "bin/Rscript")
+    return run([exe, "--vanilla", "-e", code], env=env)
+
+
+def library_env(home, **extra):
+    """The environment R starts in with ``home``, no R_LIBS_USER unless given."""
+    base = dict(os.environ, HOME=str(home))
+    return without("RHOME", "R_HOME", "R_LIBS_USER", base=base) | extra
+
+
+@pytest.mark.parametrize("how", STARTS)
+def test_user_library_is_zurs_own(r_home, tmp_path, how):
+    home = tmp_path / "home"
+    home.mkdir()
+    result = start_rscript(r_home, how, "cat(.libPaths()[1])", library_env(home))
+    assert result.returncode == 0, result.stderr
+    library = zur_library(home)
+    assert Path(result.stdout) == library
+    assert library.is_dir()
+
+
+@pytest.mark.parametrize("how", STARTS)
+def test_user_library_set_by_the_user_wins(r_home, tmp_path, how):
+    home, lib = tmp_path / "home", tmp_path / "my lib"
+    home.mkdir()
+    lib.mkdir()
+    env = library_env(home, R_LIBS_USER=str(lib))
+    result = start_rscript(r_home, how, "cat(.libPaths()[1])", env)
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout) == lib
+    assert not (home / "R").exists()
+
+
+def tool(*args):
+    result = run(["uv", "tool", *args], timeout=600)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not os.environ.get("ZUR_WHEEL"), reason="needs ZUR_WHEEL")
+def test_user_library_survives_reinstall(r_home, tmp_path):
+    # Whatever the default library is (test_user_library_is_zurs_own
+    # checks which), a package there outlives the tool's directory.
+    library = Path(rout(".libPaths()[1]"))
+    pkg = _package(
+        tmp_path,
+        "zurkeep",
+        {"NAMESPACE": "export(hi)\n", "R/hi.R": 'hi <- function() "kept"\n'},
+    )
+    installed = run(["R", "CMD", "INSTALL", str(pkg)], timeout=600)  # no -l
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    code = "cat(zurkeep::hi(), dirname(find.package('zurkeep')))"
+    wheel = os.environ["ZUR_WHEEL"]
+    # A file the wheel installs, deleted, and one it does not, added: the
+    # first shows a reinstall happened, the second whether the tool's
+    # directory was started afresh.
+    owned = r_home.parent.parent / "BUILD-INFO.json"
+    stray = r_home / "zur-reinstall-marker"
+    data = owned.read_bytes()
+    try:
+        assert (library / "zurkeep/DESCRIPTION").is_file()
+        owned.unlink()
+        stray.write_text("")
+        tool("install", "--reinstall", wheel)
+        assert owned.read_bytes() == data
+        assert rout(code).split(" ", 1) == ["kept", str(library)]
+        # uv's --reinstall rewrites the wheel's files and keeps any other
+        # file in the tool's directory (2026-11-24); uninstalling removes
+        # the directory, as a library inside it would be.
+        tool("uninstall", "zur")
+        tool("install", wheel)
+        assert not stray.exists()
+        assert rout(code).split(" ", 1) == ["kept", str(library)]
+    finally:
+        stray.unlink(missing_ok=True)
+        shutil.rmtree(library / "zurkeep", ignore_errors=True)
+
+
+# Containers started from here (ZUR_DOCKER=1): R as
+# _runtime/bin/Rscript from the unpacked wheel, as the runner's user, with
+# a home directory from this machine. The images, with the ID their
+# os-release gives:
+SHARED_HOME_IMAGES = {"ubuntu:24.04": "ubuntu", "rockylinux:8": "rocky"}
+docker = pytest.mark.skipif(
+    os.environ.get("ZUR_DOCKER") != "1", reason="needs ZUR_DOCKER=1 and ZUR_WHEEL"
+)
+
+
+@pytest.fixture(scope="module")
+def unpacked_wheel(tmp_path_factory):
+    root = tmp_path_factory.mktemp("wheel")
+    with zipfile.ZipFile(os.environ["ZUR_WHEEL"]) as zf:
+        for info in zf.infolist():
+            path = Path(zf.extract(info, root))
+            path.chmod((info.external_attr >> 16) & 0o777 or 0o644)
+    return root
+
+
+def in_container(image, wheel, home, code, read_only=False):
+    rscript = "/zur/zur/_runtime/bin/Rscript"
+    script = f"{SOURCE_OS_RELEASE}; exec {rscript} -e {shlex.quote(code)}"
+    return run(
+        ["docker", "run", "--rm", "--quiet", "--user", f"{os.getuid()}:{os.getgid()}",
+         "-v", f"{wheel}:/zur:ro",
+         "-v", f"{home}:/home/zur" + (":ro" if read_only else ""),
+         "-e", "HOME=/home/zur", image, "sh", "-c", script],
+        timeout=600,
+    )  # fmt: skip
+
+
+@docker
+def test_shared_home_keeps_one_library_per_distribution(unpacked_wheel, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    outs = {}
+    for image in SHARED_HOME_IMAGES:
+        result = in_container(image, unpacked_wheel, home, "cat(.libPaths()[1])")
+        assert result.returncode == 0, result.stderr
+        outs[image] = result.stdout.splitlines()  # [ID-VERSION_ID, library]
+    expected = {f"R/zur/x86_64-{platform}/{R_MINOR}" for platform, _ in outs.values()}
+    found = {str(p.relative_to(home)) for p in home.glob("R/zur/*/*")}
+    assert (len(found), found) == (2, expected)
+    assert sorted(p.name for p in home.iterdir()) == ["R"]
+    for image, osid in SHARED_HOME_IMAGES.items():
+        platform, library = outs[image]
+        assert re.fullmatch(PLATFORMS[image], platform)
+        assert platform.split("-")[0] == osid
+        assert library == f"/home/zur/R/zur/x86_64-{platform}/{R_MINOR}"
+
+
+@docker
+@pytest.mark.parametrize("image", SHARED_HOME_IMAGES)
+def test_read_only_home_starts_r(unpacked_wheel, tmp_path, image):
+    home = tmp_path / "home"
+    home.mkdir()
+    code = "cat(.libPaths()[1] == .Library, Sys.getenv('R_LIBS_USER'))"
+    result = in_container(image, unpacked_wheel, home, code, read_only=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    platform, out = result.stdout.splitlines()
+    # R started without the library: it could not be created.
+    assert out == f"TRUE /home/zur/R/zur/x86_64-{platform}/{R_MINOR}"
+    assert list(home.iterdir()) == []
 
 
 # Base R ----------------------------------------------------------------------
