@@ -351,6 +351,47 @@ binaries (§18):
   wheel or to an allowlisted system library; checked by the build
   (§13).
 
+Decided 2026-11-24 (stage 5), from the first Linux x86_64 wheel:
+
+- **The repair is the build's own code** (`repair()` in
+  `scripts/build.py`, with `patchelf`), not `auditwheel repair`;
+  `auditwheel show` is one of the build checks and reports
+  `manylinux_2_28_x86_64` with no external library. R's files find
+  `libR.so` and its BLAS through `ldpaths`' `LD_LIBRARY_PATH`, not an
+  RPATH, and `lib/R/lib` must keep its plain names (D16), which
+  `auditwheel repair` would graft or refuse; the own code is short and
+  leaves the check independent of it.
+- **Grafted: everything but glibc and the gcc runtime** (`libgcc_s`,
+  `libstdc++`). The rest of the manylinux allowlist is grafted too: a
+  headless container has no X11 libraries (cairo needs `libX11`,
+  `libXext`, `libXrender`), and minimal images may lack `libexpat` or
+  `libz`. The first wheel grafts 31 libraries: the Fortran runtime
+  (`libgfortran.so.5`, `libquadmath.so.0`, used only by R's own five
+  libraries and the two BLAS copies), OpenSSL and libcurl, ICU, PCRE2,
+  readline with `libtinfo`, xz, bzip2, zlib, and cairo with pixman,
+  fontconfig, expat, freetype, libpng, libjpeg, libtiff, `libjbig`,
+  `libuuid` and the X11 libraries (`libX11`, `libXau`, `libXext`,
+  `libXrender`, `libxcb`, `libxcb-render`, `libxcb-shm`).
+- **RUNPATHs:** every file that needs a graft or one of R's libraries
+  gets `$ORIGIN`-relative RUNPATH entries to `zur.libs/` and to
+  `lib/R/lib`; the built dependencies' `/opt/zur-deps/lib` RPATH is
+  removed.
+- **Compiled-in build paths** (§13, "no build path in any wheel file")
+  are overwritten by a path of the same length under `/proc/0`, which
+  never exists: `Rscript`'s compiled R home, OpenSSL's module directory
+  in `libcrypto`, and the dependency include paths in `internet.so`'s
+  debug information. Nothing reads them once R runs from the wheel,
+  except `$R_HOME/bin/Rscript` started without `RHOME`, which then fails;
+  the launcher and `bin/R` always set `RHOME` (§5).
+- **`Makeconf`:** the compilers are the plain names `gcc`, `g++`,
+  `gfortran`. `CC` is exactly `gcc`: configure chose `gcc -std=gnu23`,
+  which no host gcc before 14 accepts (seen with gcc 8, 12 and 13 in
+  the stage 5 containers), so packages compile in the host's default C
+  standard and `Rconfig.h` decides `HAVE_ENUM_BASE_TYPE` per compiler.
+  The C++ and Fortran standard flags configure chose stay after their
+  compilers (stage 10 tests them across host compilers). The built
+  dependencies' `-I` and `-L` flags are removed.
+
 ### 6.4 Runtime files a headless container lacks
 
 - **CA certificates:** `bin/R` (§5) points `CURL_CA_BUNDLE` and
@@ -540,7 +581,12 @@ yet built:
 | --- | --- | --- |
 | macOS arm64 | 87.5 MB | about 37 MB |
 | Windows x64 | 108.4 MB | about 55 MB |
-| Linux x86_64 | (source build) | to be measured; budget 100 MB, target 60 MB |
+| Linux x86_64 | (source build) 63.1 MB unpruned (stage 5) | to be measured; budget 100 MB, target 60 MB |
+
+The Linux x86_64 wheel before §9's prune was 63,122,429 bytes
+(63.1 MB) on 2026-11-24 (stage 5): R 4.6.2 from source with the 31
+libraries of §6.3 grafted (run
+https://github.com/pedrobtz/py-zur/actions/runs/45310120781).
 
 Largest items removed: recommended packages about 26 MB, manuals about
 18–19 MB, Tcl/Tk or X11 about 4–5 MB. The build fails when a wheel
@@ -800,7 +846,8 @@ not a decision.
 
 ## 17. Background: the conda-forge prototype
 
-The first prototype (PR #1, `scripts/build.py`) repackaged conda-forge's
+The first prototype (PR #1, `scripts/build.py` until stage 5 replaced
+it) repackaged conda-forge's
 `r-base` and `r-recommended` for `linux-64`. It built a working wheel,
 passed 13 installed-tool checks in Ubuntu 24.04, Debian 12 and Rocky
 Linux 8 containers, and established the launcher, the relocation of
