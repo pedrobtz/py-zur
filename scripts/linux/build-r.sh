@@ -76,7 +76,7 @@ build() {
   # the same way; dash exits 127 when it finds nothing, which
   # system(intern = TRUE) turns into an error, so the exit trap makes the
   # status 0. configure takes a cache variable as found.
-  ac_cv_path_WHICH="trap 'exit 0' 0; command -v" \
+  ac_cv_path_WHICH="command -v" \
     PATH="$deps/bin:$PATH" PKG_CONFIG_PATH="$deps/lib/pkgconfig" \
     CPPFLAGS="-I$deps/include" LDFLAGS="-L$deps/lib" \
     LIBnn=lib ./configure --prefix="$prefix" \
