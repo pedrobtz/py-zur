@@ -240,4 +240,8 @@ def test_no_usr_local_paths():
     # keeps builds there that are no pinned input.
     for name in ["etc/Makeconf", "etc/ldpaths"]:
         lines = (PREFIX / "lib/R" / name).read_text().splitlines()
-        assert [s for s in lines if "/usr/local" in s] == [], name
+        # "##" lines are comments of R's own templates; one names
+        # /usr/local/lib as an example. configure's record of its call
+        # ("# configure ...") is kept, as it shows the environment.
+        found = [s for s in lines if "/usr/local" in s and not s.startswith("##")]
+        assert found == [], name
