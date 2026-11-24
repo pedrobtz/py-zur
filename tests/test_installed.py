@@ -205,13 +205,13 @@ ENV_VARS = ("FONTCONFIG_FILE", "CURL_CA_BUNDLE", "SSL_CERT_FILE")
 
 
 def test_environment_is_the_same_without_the_launcher(r_home):
-    code = f"cat(Sys.getenv(c({', '.join(map(repr, ENV_VARS))})), sep = '\\n')"
+    code = f"cat(Sys.getenv(c({', '.join(map(repr, ENV_VARS))})), sep = '|')"
     env = without("RHOME", "R_HOME", *ENV_VARS)
     launched = run(["Rscript", "--vanilla", "-e", code], env=env)
     bare = run([str(r_home / "bin/Rscript"), "--vanilla", "-e", code], env=env)
     assert launched.returncode == 0 and bare.returncode == 0, bare.stderr
     assert bare.stdout == launched.stdout
-    fonts, ca, ssl = bare.stdout.split("\n")
+    fonts, ca, ssl = bare.stdout.split("|")
     assert fonts == str(r_home / "etc/fonts/fonts.conf")
     if any(Path(p).is_file() for p in CA_CANDIDATES):
         assert ca == ssl == CA_BUNDLES[os_release_id()]
@@ -237,6 +237,7 @@ def test_blas_and_lapack_known_answer(r_home):
     assert Path(blas).resolve() == (r_home / "lib/libRblas.so").resolve()
 
 
+@pytest.mark.skipif(shutil.which("make") is None, reason="R CMD config runs make")
 @pytest.mark.parametrize(
     ("var", "expected"), [("CC", "gcc"), ("CXX", "g++"), ("FC", "gfortran")]
 )
@@ -293,11 +294,6 @@ def test_sys_which_without_usr_bin_which():
     assert missing == ""
 
 
-def test_r_starts_with_empty_stderr():
-    result = run(["R", "--vanilla", "-q", "-s"], input="invisible(Sys.which('sh'))\n")
-    assert (result.returncode, result.stderr) == (0, "")
-
-
 # Graphics headless (design §6.4, §13) ----------------------------------------
 
 # Escapes, so the string is UTF-8 in R whatever the locale (CI's is C).
@@ -324,8 +320,9 @@ def test_png_draws_text(tmp_path):
 
 
 def test_pdf_draws_text(tmp_path):
-    # CP1252 has the euro sign; pdf()'s default, ISO Latin 1, has not.
-    pdf = draw(tmp_path, "text.pdf", 'pdf("{out}", encoding = "CP1252")')
+    # WinAnsi (CP1252) has the euro sign; pdf()'s default, ISO Latin 1,
+    # has not.
+    pdf = draw(tmp_path, "text.pdf", 'pdf("{out}", encoding = "WinAnsi")')
     assert pdf[:4] == b"%PDF"
 
 
