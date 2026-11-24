@@ -812,6 +812,13 @@ structure, so the column sums to the file's size:
 | everything else | 856 | 4,520,772 | 9,610,617 | 7.6% |
 | zip headers and directory | | 231,044 | | 0.4% |
 
+**With `zur doctor` and the `libflexiblas.so.3` shim, 2026-11-24
+(stage 11):** 59,311,902 bytes, 4,485 more than after stage 10
+(59,307,417, §18.3) and 688,098 bytes under the 60 MB target (run
+https://github.com/pedrobtz/py-zur/actions/runs/45359966280). R's
+libraries are 6 files, 10,907,847 bytes in the wheel and 32,058,038
+unpacked: the shim adds 13,497 bytes unpacked, 752 compressed.
+
 **What D14 saves, 2026-11-24 (stage 9):** the same commit built once
 with `pango-devel` installed (the `pango` dispatch input of `build.yml`,
 run https://github.com/pedrobtz/py-zur/actions/runs/45343819148) gives
