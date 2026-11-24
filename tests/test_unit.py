@@ -49,12 +49,12 @@ def test_license_is_gpl_2():
     assert hashlib.sha256(text).hexdigest() == GPL_2_SHA256
 
 
-def test_wheel_metadata_claims_the_license_file():
-    # pack() writes the wheel's METADATA; its licence must be the one in
-    # LICENSE. The field becomes License-Expression in stage 13.
+def test_wheel_metadata_names_no_fixed_licence():
+    # pack() writes the wheel's METADATA. Since stage 13 its licence is
+    # the generated License-Expression (design §14, D21), never a fixed
+    # string in the build script, and the deprecated License field is gone.
     source = (REPO / "scripts/build.py").read_text()
-    claimed = re.findall(r"License(?:-Expression)?: ([^\\\n\"]+)", source)
-    assert claimed == ["GPL-2.0-or-later"]
+    assert re.findall(r"License(?:-Expression)?: ([^\\\n\"{]+)", source) == []
 
 
 # scripts/elf_needed.py ------------------------------------------------------
@@ -183,6 +183,7 @@ def source_entry(name, url, sha):
         url = "{url}"
         sha256 = "{sha}"
         license = "MIT"
+        license_files = ["COPYING"]
         sonames = ["lib{name}.so.9"]
         why = "test"
         """)
@@ -275,14 +276,18 @@ def test_build_info_lists_the_manifest_and_r(tmp_path):
             origin = "image"
             package = "zlib-devel"
             package_version = "1.2.11-25.el8"
+            srpm = { nvr = "zlib-1.2.11-25.el8", url = "URL", sha256 = "DIGEST" }
             license = "Zlib"
+            license_files = ["/usr/share/licenses/zlib/README"]
             sonames = ["libz.so.1"]
             why = "test"
             """)
+        .replace("DIGEST", "d" * 64)
+        .replace("URL", "https://example.org/zlib-1.2.11-25.el8.src.rpm")
     )
     (tmp_path / "r-source").write_text(
         "# comment\nR_VERSION=4.6.2\nR_URL=https://example.org/R.tar.gz\n"
-        f"R_SHA256={'b' * 64}\n"
+        f"R_SHA256={'b' * 64}\nR_LICENSE=GPL-2.0-or-later\n"
     )
     (tmp_path / "image").write_text("# comment\nquay.io/x:1@sha256:" + "c" * 64)
     result = deps_py(
@@ -301,6 +306,7 @@ def test_build_info_lists_the_manifest_and_r(tmp_path):
                 "version": "4.6.2",
                 "url": "https://example.org/R.tar.gz",
                 "sha256": "b" * 64,
+                "license": "GPL-2.0-or-later",
             },
             "image": "quay.io/x:1@sha256:" + "c" * 64,
             "dependencies": [
@@ -311,8 +317,14 @@ def test_build_info_lists_the_manifest_and_r(tmp_path):
                     "url": "https://example.org/curl-9.9.tar.gz",
                     "sha256": "a" * 64,
                     "license": "MIT",
+                    "license_files": ["COPYING"],
                     "sonames": ["libcurl.so.9"],
                     "why": "test",
+                    "source": {
+                        "kind": "tarball",
+                        "url": "https://example.org/curl-9.9.tar.gz",
+                        "sha256": "a" * 64,
+                    },
                 },
                 {
                     "name": "zlib",
@@ -320,9 +332,21 @@ def test_build_info_lists_the_manifest_and_r(tmp_path):
                     "origin": "image",
                     "package": "zlib-devel",
                     "package_version": "1.2.11-25.el8",
+                    "srpm": {
+                        "nvr": "zlib-1.2.11-25.el8",
+                        "url": "https://example.org/zlib-1.2.11-25.el8.src.rpm",
+                        "sha256": "d" * 64,
+                    },
                     "license": "Zlib",
+                    "license_files": ["/usr/share/licenses/zlib/README"],
                     "sonames": ["libz.so.1"],
                     "why": "test",
+                    "source": {
+                        "kind": "srpm",
+                        "name": "zlib-1.2.11-25.el8",
+                        "url": "https://example.org/zlib-1.2.11-25.el8.src.rpm",
+                        "sha256": "d" * 64,
+                    },
                 },
             ],
         }
@@ -382,17 +406,28 @@ def fake_rpm(tmp_path):
     return run
 
 
-def test_rpm_check_accepts_the_pinned_versions(fake_rpm):
+def installed_as_pinned():
+    """What `rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE} %{SOURCERPM}'`
+    prints for each "image" package of the committed manifest."""
     with MANIFEST.open("rb") as f:
         entries = tomllib.load(f)["dependency"]
-    pinned = {
-        e["package"]: e["package_version"]
-        if ":" in e["package_version"]
-        else "0:" + e["package_version"]
+    return {
+        e["package"]: (
+            e["package_version"]
+            if ":" in e["package_version"]
+            else "0:" + e["package_version"]
+        )
+        + f" {e['srpm']['nvr']}.src.rpm"
         for e in entries
         if e["origin"] == "image"
     }
-    assert pinned["libpng-devel"] == "2:1.6.34-11.el8_10"
+
+
+def test_rpm_check_accepts_the_pinned_versions(fake_rpm):
+    pinned = installed_as_pinned()
+    assert (
+        pinned["libpng-devel"] == "2:1.6.34-11.el8_10 libpng-1.6.34-11.el8_10.src.rpm"
+    )
     result = fake_rpm(pinned)
     assert result.returncode == 0, result.stderr
 
@@ -401,24 +436,20 @@ def test_rpm_check_accepts_the_pinned_versions(fake_rpm):
     ("installed", "message"),
     [
         (
-            "0:1.2.11-24.el8",
+            "0:1.2.11-24.el8 zlib-1.2.11-24.el8.src.rpm",
             "zlib-devel: pinned 0:1.2.11-25.el8, found 0:1.2.11-24.el8",
         ),
         (None, "zlib-devel: pinned 0:1.2.11-25.el8, found not installed"),
+        # Stage 13: the pinned version, rebuilt from another source RPM.
+        (
+            "0:1.2.11-25.el8 zlib-1.2.11-25.el8.alma.1.src.rpm",
+            "zlib-devel: built from zlib-1.2.11-25.el8.alma.1.src.rpm, "
+            "pinned zlib-1.2.11-25.el8.src.rpm",
+        ),
     ],
 )
 def test_rpm_check_refuses_another_version(fake_rpm, installed, message):
-    with MANIFEST.open("rb") as f:
-        entries = tomllib.load(f)["dependency"]
-    versions = {
-        e["package"]: (
-            e["package_version"]
-            if ":" in e["package_version"]
-            else "0:" + e["package_version"]
-        )
-        for e in entries
-        if e["origin"] == "image"
-    }
+    versions = installed_as_pinned()
     versions["zlib-devel"] = installed
     result = fake_rpm(versions)
     assert result.returncode == 1
@@ -1744,3 +1775,448 @@ def test_launcher_checks_before_starting_r(monkeypatch):
     launcher.Rscript()
     assert [e[0] for e in events] == ["check", "exec"]
     assert events[0][1] is events[1][1] and "R_HOME" not in events[1][1]
+
+
+# Licences and build info (roadmap stage 13, design §14) ----------------------
+#
+# The manifest's licence fields, the licence files deps.py collects, the
+# provenance of every graft, the generated License-Expression and the
+# METADATA that names the licence files. The wheel itself: test_build.py.
+
+deps = load_module("zur_deps", REPO / "scripts/deps.py")
+
+# The committed manifest's License-Expression, written out by hand from
+# the manifest's licences in file order, R's first, each term once.
+LINUX_EXPRESSION = (
+    "GPL-2.0-or-later AND Apache-2.0 AND curl AND HPND-sell-variant"
+    " AND MIT-Modern-Variant AND MIT AND Unicode-DFS-2016"
+    " AND LicenseRef-public-domain AND Zlib AND bzip2-1.0.6 AND BSD-3-Clause"
+    " AND ICU AND NAIST-2003 AND GPL-3.0-or-later"
+    " AND (LGPL-2.1-only OR MPL-1.1) AND (FTL OR GPL-2.0-or-later)"
+    " AND Libpng AND IJG AND libtiff"
+    " AND GPL-3.0-or-later WITH GCC-exception-3.1 AND LGPL-2.1-or-later"
+    " AND X11-distribute-modifications-variant AND X11 AND MIT-open-group"
+    " AND HPND AND HPND-doc-sell AND HPND-doc AND OFL-1.1-RFN"
+)
+
+
+def image_entry(name="zlib", **fields):
+    """An "image" entry as TOML, with ``fields`` replacing or adding lines
+    (a value of None drops the line)."""
+    lines = {
+        "name": f'"{name}"',
+        "version": '"1.2.11"',
+        "origin": '"image"',
+        "package": f'"{name}-devel"',
+        "package_version": '"1.2.11-25.el8"',
+        "srpm": f'{{ nvr = "{name}-1.2.11-25.el8", url = '
+        f'"https://example.org/{name}-1.2.11-25.el8.src.rpm", '
+        f'sha256 = "{"d" * 64}" }}',
+        "license": '"Zlib"',
+        "license_files": f'["/usr/share/licenses/{name}/README"]',
+        "sonames": f'["lib{name}.so.1"]',
+        "why": '"test"',
+    }
+    lines.update(fields)
+    body = "".join(f"{k} = {v}\n" for k, v in lines.items() if v is not None)
+    return "[[dependency]]\n" + body
+
+
+def check_manifest(tmp_path, *entries):
+    (tmp_path / "linux.toml").write_text("\n".join(entries))
+    return deps_py("check", env={"ZUR_MANIFEST": str(tmp_path / "linux.toml")})
+
+
+def manifest_entries(tmp_path, *entries):
+    (tmp_path / "linux.toml").write_text("\n".join(entries))
+    return deps.load(tmp_path / "linux.toml")
+
+
+def test_committed_manifest_pins_every_source_rpm():
+    # Every "image" entry names the source RPM its package is built from,
+    # in AlmaLinux 8.10's archive (stage 14 mirrors them), and has a
+    # licence file; the transitive ones say through which entry they come.
+    with MANIFEST.open("rb") as f:
+        entries = tomllib.load(f)["dependency"]
+    for e in entries:
+        assert e["license_files"], e["name"]
+        if e["origin"] == "image":
+            assert e["srpm"]["url"] == (
+                "https://vault.almalinux.org/8.10/"
+                + e["srpm"]["url"].split("/")[4]
+                + f"/Source/Packages/{e['srpm']['nvr']}.src.rpm"
+            ), e["name"]
+    via = {e["name"]: e["via"] for e in entries if "via" in e}
+    assert via == {
+        "libgfortran": "r",
+        "libquadmath": "libgfortran",
+        "ncurses": "readline",
+        "expat": "fontconfig",
+        "jbigkit": "libtiff",
+        "pixman": "cairo",
+        "libX11": "cairo",
+        "libXext": "cairo",
+        "libXrender": "cairo",
+        "libxcb": "cairo",
+        "libXau": "libxcb",
+    }
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        (None, "zlib: missing license_files"),
+        ("[]", "zlib: no licence files"),
+        ('["README"]', "zlib: licence file 'README' is not a path its origin takes"),
+        (
+            '["/a/COPYING", "/b/COPYING"]',
+            "zlib: two licence files share a name",
+        ),
+    ],
+)
+def test_entry_without_a_licence_file_is_refused(tmp_path, line, message):
+    # Roadmap stage 13: a manifest entry with no licence file fails the
+    # build, with its name (build-r.sh and build-deps.sh both start with
+    # deps.py, which validates the manifest first).
+    result = check_manifest(tmp_path, image_entry(license_files=line))
+    assert result.returncode == 1
+    assert result.stderr == f"deps.py: {message}\n"
+
+
+def test_source_entry_licence_files_are_tarball_paths(tmp_path):
+    entry = source_entry("curl", "https://example.org/curl-9.9.tar.gz", "a" * 64)
+    entry = entry.replace('["COPYING"]', '["/usr/share/COPYING"]')
+    result = check_manifest(tmp_path, entry)
+    assert result.stderr == (
+        "deps.py: curl: licence file '/usr/share/COPYING' is not a path its "
+        "origin takes\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"srpm": None}, "zlib: needs exactly one of srpm, source_unknown"),
+        (
+            {"source_unknown": '{ reason = "x", looked_in = ["y"] }'},
+            "zlib: needs exactly one of srpm, source_unknown",
+        ),
+        (
+            {"srpm": None, "source_unknown": '{ reason = "", looked_in = ["y"] }'},
+            "zlib: source_unknown needs a reason",
+        ),
+        (
+            {"srpm": None, "source_unknown": '{ looked_in = ["y"] }'},
+            "zlib: source_unknown needs a reason",
+        ),
+        (
+            {"srpm": None, "source_unknown": '{ reason = "x", looked_in = [] }'},
+            "zlib: source_unknown needs looked_in",
+        ),
+        (
+            {
+                "srpm": '{ nvr = "zlib-1", url = "https://x/zlib-2.src.rpm", '
+                f'sha256 = "{"d" * 64}" }}'
+            },
+            "zlib: srpm url does not name zlib-1.src.rpm",
+        ),
+        ({"via": '"cairo"'}, "zlib: via 'cairo' is no entry"),
+        ({"name": "r"}, "r: the name is reserved for licenses/r"),
+    ],
+)
+def test_image_entry_source_fields_are_checked(tmp_path, fields, message):
+    result = check_manifest(tmp_path, image_entry(**fields))
+    assert result.returncode == 1
+    assert result.stderr == f"deps.py: {message}\n"
+
+
+UNKNOWN = '{ reason = "no source RPM published", looked_in = ["vault", "mirror"] }'
+
+
+def test_source_null_needs_a_reason_and_keeps_its_licence(tmp_path):
+    # Design §14: a library whose source cannot be identified is listed
+    # with source null, its reason and where it was looked for, and its
+    # licence text is shipped all the same.
+    entries = manifest_entries(
+        tmp_path,
+        image_entry(srpm=None, source_unknown=UNKNOWN, license_files=None).replace(
+            "[[dependency]]\n",
+            f'[[dependency]]\nlicense_files = ["{tmp_path}/README"]\n',
+        ),
+    )
+    (tmp_path / "r-source").write_text(
+        "R_VERSION=4.6.2\nR_URL=https://example.org/R.tar.gz\n"
+        f"R_SHA256={'b' * 64}\nR_LICENSE=GPL-2.0-or-later\n"
+    )
+    (tmp_path / "image").write_text("quay.io/x:1@sha256:" + "c" * 64)
+    (d,) = deps.build_info(entries, tmp_path / "r-source", tmp_path / "image")[
+        "inputs"
+    ]["dependencies"]
+    assert d["source"] is None
+    assert d["reason"] == "no source RPM published"
+    assert d["looked_in"] == ["vault", "mirror"]
+    (tmp_path / "README").write_text("the licence\n")
+    deps.licenses(entries, tmp_path / "out", tmp_path / "deps", owner=None)
+    assert (tmp_path / "out/zlib/README").read_text() == "the licence\n"
+
+
+def test_licenses_collects_each_origin(tmp_path):
+    lic = tmp_path / "usr/share/licenses/zlib"
+    lic.mkdir(parents=True)
+    (lic / "README").write_text("zlib licence\n")
+    kept = tmp_path / "deps/share/licenses/curl"
+    kept.mkdir(parents=True)
+    (kept / "COPYING").write_text("curl licence\n")
+    entries = manifest_entries(
+        tmp_path,
+        source_entry("curl", "https://example.org/curl-9.9.tar.gz", "a" * 64),
+        image_entry(license_files=f'["{lic}/README"]'),
+    )
+    asked = []
+
+    def owner(path):
+        asked.append(Path(path))
+        return "zlib-1.2.11-25.el8.src.rpm"
+
+    deps.licenses(entries, tmp_path / "out", tmp_path / "deps", owner=owner)
+    assert (tmp_path / "out/curl/COPYING").read_text() == "curl licence\n"
+    assert (tmp_path / "out/zlib/README").read_text() == "zlib licence\n"
+    assert asked == [lic / "README"]
+
+
+def test_licenses_refuses_a_missing_file_with_its_name(tmp_path):
+    entries = manifest_entries(
+        tmp_path, image_entry(license_files=f'["{tmp_path}/nowhere/README"]')
+    )
+    with pytest.raises(deps.Refused, match=r"^zlib: licence file .*/README missing$"):
+        deps.licenses(entries, tmp_path / "out", tmp_path / "deps", owner=None)
+
+
+def test_licenses_refuses_a_file_from_another_source_rpm(tmp_path):
+    (tmp_path / "README").write_text("x\n")
+    entries = manifest_entries(
+        tmp_path, image_entry(license_files=f'["{tmp_path}/README"]')
+    )
+    with pytest.raises(
+        deps.Refused,
+        match=r"^zlib: licence file .*README is from other-1.src.rpm, "
+        r"not zlib-1.2.11-25.el8.src.rpm$",
+    ):
+        deps.licenses(
+            entries,
+            tmp_path / "out",
+            tmp_path / "deps",
+            owner=lambda p: "other-1.src.rpm",
+        )
+
+
+def test_license_owners_names_the_packages_to_reinstall(tmp_path, monkeypatch):
+    (tmp_path / "present").write_text("x\n")
+    entries = manifest_entries(
+        tmp_path,
+        image_entry("zlib", license_files=f'["{tmp_path}/present"]'),
+        image_entry("pixman", license_files='["/nowhere/pixman/COPYING"]'),
+        image_entry("libxcb", license_files='["srpm:x.tar.bz2/x/COPYING"]'),
+    )
+    monkeypatch.setattr(
+        deps, "rpm_files", lambda: {"/nowhere/pixman/COPYING": "pixman", "/x": "y"}
+    )
+    assert deps.license_owners(entries) == ["pixman"]
+
+
+# Provenance of the grafts: the repair's SONAMEs against the entries.
+
+
+def provenance_case(tmp_path):
+    entries = manifest_entries(
+        tmp_path,
+        source_entry("curl", "https://example.org/curl-9.9.tar.gz", "a" * 64),
+        image_entry("zlib"),
+    )
+    grafts = {
+        "libcurl.so.9": "libcurl-0123abcd.so.9",
+        "libzlib.so.1": "libzlib-4567cdef.so.1",
+    }
+    found_at = {
+        "libcurl.so.9": Path("/opt/zur-deps/lib/libcurl.so.9"),
+        "libzlib.so.1": Path("/usr/lib64/libzlib.so.1"),
+    }
+    return entries, grafts, found_at
+
+
+def owned_by(srpm):
+    return lambda path: srpm
+
+
+def test_provenance_maps_each_graft_to_its_entry(tmp_path):
+    entries, grafts, found_at = provenance_case(tmp_path)
+    files = build.provenance(
+        grafts,
+        found_at,
+        entries,
+        "/opt/zur-deps",
+        owner=owned_by("zlib-1.2.11-25.el8.src.rpm"),
+    )
+    assert files == {
+        "curl": ["zur.libs/libcurl-0123abcd.so.9"],
+        "zlib": ["zur.libs/libzlib-4567cdef.so.1"],
+    }
+
+
+def test_provenance_refuses_a_graft_no_entry_names(tmp_path):
+    # Roadmap stage 13 (#14 item 4): a grafted file whose package has no
+    # manifest entry fails the build.
+    entries, grafts, found_at = provenance_case(tmp_path)
+    grafts["libpixman-1.so.0"] = "libpixman-1-89abcdef.so.0"
+    found_at["libpixman-1.so.0"] = Path("/usr/lib64/libpixman-1.so.0")
+    with pytest.raises(SystemExit) as e:
+        build.provenance(
+            grafts,
+            found_at,
+            entries,
+            "/opt/zur-deps",
+            owner=owned_by("zlib-1.2.11-25.el8.src.rpm"),
+        )
+    assert str(e.value) == (
+        "provenance:\n  zur.libs/libpixman-1-89abcdef.so.0 (libpixman-1.so.0, from "
+        "/usr/lib64/libpixman-1.so.0) belongs to no manifest entry"
+    )
+
+
+def test_provenance_refuses_a_graft_from_another_source_rpm(tmp_path):
+    entries, grafts, found_at = provenance_case(tmp_path)
+    with pytest.raises(SystemExit) as e:
+        build.provenance(
+            grafts,
+            found_at,
+            entries,
+            "/opt/zur-deps",
+            owner=owned_by("zlib-9-1.src.rpm"),
+        )
+    assert str(e.value) == (
+        "provenance:\n  zur.libs/libzlib-4567cdef.so.1 (libzlib.so.1, from "
+        "/usr/lib64/libzlib.so.1) is from zlib-9-1.src.rpm, not zlib's "
+        "zlib-1.2.11-25.el8.src.rpm"
+    )
+
+
+def test_provenance_refuses_a_built_library_from_elsewhere(tmp_path):
+    entries, grafts, found_at = provenance_case(tmp_path)
+    found_at["libcurl.so.9"] = Path("/usr/lib64/libcurl.so.9")
+    with pytest.raises(SystemExit, match="is curl's but not from /opt/zur-deps/lib$"):
+        build.provenance(
+            grafts,
+            found_at,
+            entries,
+            "/opt/zur-deps",
+            owner=owned_by("zlib-1.2.11-25.el8.src.rpm"),
+        )
+
+
+def test_provenance_refuses_an_entry_nothing_bundles(tmp_path):
+    entries, grafts, found_at = provenance_case(tmp_path)
+    del grafts["libzlib.so.1"]
+    with pytest.raises(SystemExit) as e:
+        build.provenance(grafts, found_at, entries, "/opt/zur-deps", owner=None)
+    assert str(e.value) == "provenance:\n  zlib: libzlib.so.1 is not bundled"
+
+
+# The licence expression and METADATA.
+
+
+def info_with(*licenses):
+    return {
+        "inputs": {
+            "r": {"license": "GPL-2.0-or-later"},
+            "dependencies": [
+                {"name": f"d{i}", "license": x} for i, x in enumerate(licenses)
+            ],
+        },
+        "zur": {"license": "GPL-2.0-or-later"},
+    }
+
+
+def test_license_expression_of_the_committed_manifest():
+    from packaging.licenses import canonicalize_license_expression
+
+    info = {
+        "inputs": {
+            "r": {
+                "license": deps.shell_vars(REPO / "scripts/linux/r-source")["R_LICENSE"]
+            },
+            "dependencies": deps.load(),
+        },
+        "zur": {"license": build.ZUR_LICENSE},
+    }
+    expression = build.license_expression(info)
+    assert expression == LINUX_EXPRESSION
+    assert canonicalize_license_expression(expression) == expression
+
+
+@pytest.mark.parametrize(
+    ("licenses", "expected"),
+    [
+        # Each term once, in first-seen order; an OR keeps its parentheses.
+        (["MIT", "MIT AND Zlib"], "GPL-2.0-or-later AND MIT AND Zlib"),
+        (["FTL OR GPL-2.0-or-later"], "GPL-2.0-or-later AND (FTL OR GPL-2.0-or-later)"),
+        (
+            ["(MIT OR X11) AND Zlib", "Zlib AND (MIT OR X11)"],
+            "GPL-2.0-or-later AND (MIT OR X11) AND Zlib",
+        ),
+        (
+            ["GPL-3.0-or-later WITH GCC-exception-3.1", "GPL-3.0-or-later"],
+            "GPL-2.0-or-later AND GPL-3.0-or-later WITH GCC-exception-3.1"
+            " AND GPL-3.0-or-later",
+        ),
+    ],
+)
+def test_license_expression_ands_each_term_once(licenses, expected):
+    assert build.license_expression(info_with(*licenses)) == expected
+
+
+def test_metadata_is_valid_core_metadata_2_4():
+    # PEP 639: License-Expression and one License-File per licence file,
+    # paths relative to the .dist-info's licenses/; packaging validates it.
+    from packaging.metadata import Metadata
+
+    files = ["curl/COPYING", "r/COPYING", "zur/LICENSE"]
+    text = build.metadata("4.6.2", "GPL-2.0-or-later AND curl", files)
+    meta = Metadata.from_email(text, validate=True)
+    assert str(meta.metadata_version) == "2.4"
+    assert str(meta.license_expression) == "GPL-2.0-or-later AND curl"
+    assert [str(f) for f in meta.license_files] == files
+    assert meta.license is None
+
+
+def test_build_licenses_adds_r_and_zur_and_refuses_an_empty_entry(tmp_path):
+    runtime = tmp_path / "_runtime"
+    (runtime / "lib/R/doc").mkdir(parents=True)
+    (runtime / build.R_COPYING).write_text("R's GPL-2\n")
+    (runtime / "licenses/zlib").mkdir(parents=True)
+    (runtime / "licenses/zlib/README").write_text("zlib\n")
+    info = {"inputs": {"dependencies": [{"name": "zlib"}]}}
+    assert build.licenses(runtime, info) == ["r/COPYING", "zlib/README", "zur/LICENSE"]
+    assert (runtime / "licenses/zur/LICENSE").read_bytes() == (
+        REPO / "LICENSE"
+    ).read_bytes()
+    info["inputs"]["dependencies"].append({"name": "pixman"})
+    (runtime / "licenses/pixman").mkdir()
+    with pytest.raises(SystemExit) as e:
+        build.licenses(runtime, info)
+    assert str(e.value) == "licenses: no licence file for pixman"
+
+
+def test_pack_puts_the_licences_in_the_dist_info(tmp_path):
+    stage = tmp_path / "stage"
+    lic = stage / "zur/_runtime/licenses"
+    (lic / "r").mkdir(parents=True)
+    (lic / "r/COPYING").write_text("GPL-2\n")
+    wheel = build.pack(
+        stage, tmp_path / "out", "4.6.2", "any", "GPL-2.0-or-later", ["r/COPYING"]
+    )
+    with build.zipfile.ZipFile(wheel) as zf:
+        names = set(zf.namelist())
+        meta = zf.read("zur-4.6.2.dist-info/METADATA").decode()
+        assert zf.read("zur-4.6.2.dist-info/licenses/r/COPYING") == b"GPL-2\n"
+    assert "zur/_runtime/licenses/r/COPYING" in names
+    assert "License-Expression: GPL-2.0-or-later\nLicense-File: r/COPYING\n" in meta

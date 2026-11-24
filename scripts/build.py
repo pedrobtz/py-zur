@@ -16,11 +16,16 @@ as built, for tests/test_prefix.py):
 3. blas      libblas.so.3 and liblapack.so.3 next to R's own, and the
              libflexiblas.so.3 shim onto them (D16)
 4. repair    graft every library outside the system baseline into
-             zur.libs/ under a hashed name; $ORIGIN-relative RUNPATHs
+             zur.libs/ under a hashed name; $ORIGIN-relative RUNPATHs;
+             every graft must belong to a manifest entry (provenance)
 5. prune     what a headless R does not use (design §9, D6, D19)
 6. scrub     build-prefix strings compiled into ELF files
 7. dedupe    symlinks, which wheels cannot hold
-8. pack      the copy, the launcher and zur doctor into a wheel, checked against
+8. licenses  R's and zur's licence texts next to the manifest's, which
+             ``deps.py licenses`` put in the prefix; BUILD-INFO.json gets
+             the files each entry bundles and the licence expression
+             (design §14)
+9. pack      the copy, the launcher and zur doctor into a wheel, checked against
              --max-size (PyPI's per-file limit by default, design §10);
              --size-report prints its size by part
 
@@ -31,6 +36,7 @@ See .agents/design.md for the design.
 import argparse
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -47,6 +53,16 @@ from elftools.elf.elffile import ELFFile
 
 REPO = Path(__file__).resolve().parent.parent
 TAG = "manylinux_2_28_x86_64"
+
+
+def _load_deps():
+    spec = importlib.util.spec_from_file_location("zur_deps", REPO / "scripts/deps.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+deps_py = _load_deps()
 
 # What R and its libraries may take from the machine (design §6.3): glibc
 # and the gcc runtime C++ code needs, which every manylinux_2_28 system
@@ -538,13 +554,15 @@ def repair(stage, runtime, deps):
     an ELF file needs, directly or through a graft, is copied into
     ``zur.libs/`` under a hashed name, as ``auditwheel repair`` does, and
     every file that needs it points at the new name through a
-    ``$ORIGIN``-relative RUNPATH. Returns {original SONAME: graft name}.
+    ``$ORIGIN``-relative RUNPATH. Returns {original SONAME: graft name}
+    and {original SONAME: the file it was copied from}.
     """
     r_lib = runtime / "lib/R/lib"
     libs = stage / "zur.libs"
     libs.mkdir()
     own = {p.name for p in r_lib.iterdir()}
     grafts = {}  # original SONAME -> graft file name
+    found_at = {}  # original SONAME -> where it was found
     missing = []
     todo = list(elf_files(stage))
     plan = {}  # ELF file -> (needed, runpath it had)
@@ -563,6 +581,7 @@ def repair(stage, runtime, deps):
                 missing.append(f"{path.relative_to(stage)} needs {name}")
                 continue
             data = found.resolve().read_bytes()
+            found_at[name] = found
             grafts[name] = graft_name(name, data)
             copy = libs / grafts[name]
             copy.write_bytes(data)
@@ -589,7 +608,138 @@ def repair(stage, runtime, deps):
             args += ["--remove-rpath"]
         if args:
             patchelf(*args, path)
-    return grafts
+    return grafts, found_at
+
+
+def provenance(grafts, found_at, entries, deps, owner=None):
+    """{entry name: the zur.libs/ files it bundles}, or refuse (design §14).
+
+    Every graft's SONAME is one entry's; a graft from the image must be
+    owned by a package built from that entry's source RPM (``rpm -qf``),
+    and one from a "source" entry must come from the built dependencies.
+    Every SONAME an entry lists must be bundled.
+    """
+    owner = owner or deps_py.rpm_owner
+    by_soname = {s: e for e in entries for s in e["sonames"]}
+    files = {e["name"]: [] for e in entries}
+    problems = []
+    for soname, graft in sorted(grafts.items()):
+        where = f"zur.libs/{graft} ({soname}, from {found_at[soname]})"
+        e = by_soname.get(soname)
+        if e is None:
+            problems.append(f"{where} belongs to no manifest entry")
+            continue
+        if e["origin"] == "source":
+            if Path(deps) / "lib" not in Path(found_at[soname]).parents:
+                problems.append(f"{where} is {e['name']}'s but not from {deps}/lib")
+                continue
+        elif "srpm" in e:
+            got = owner(found_at[soname])
+            if got != f"{e['srpm']['nvr']}.src.rpm":
+                problems.append(
+                    f"{where} is from {got}, not {e['name']}'s "
+                    f"{e['srpm']['nvr']}.src.rpm"
+                )
+                continue
+        files[e["name"]].append(f"zur.libs/{graft}")
+    for e in entries:
+        for soname in e["sonames"]:
+            if soname not in grafts:
+                problems.append(f"{e['name']}: {soname} is not bundled")
+    if problems:
+        raise SystemExit("provenance:\n  " + "\n  ".join(problems))
+    return files
+
+
+# 8. licenses (run after dedupe; numbered as in the module docstring) -----------
+
+LICENSES = "licenses"  # under zur/_runtime, and under the .dist-info
+# R's own licence text in R_HOME, and zur's (the repository's LICENSE).
+R_COPYING = "lib/R/doc/COPYING"
+ZUR_LICENSE = "GPL-2.0-or-later"
+FONT_ENTRY = "liberation-sans-fonts"
+
+
+def split_and(expression):
+    """The terms of an SPDX expression's top-level AND, in order."""
+    terms, depth, start = [], 0, 0
+    for i, c in enumerate(expression):
+        depth += {"(": 1, ")": -1}.get(c, 0)
+        if depth == 0 and expression.startswith(" AND ", i):
+            terms.append(expression[start:i].strip())
+            start = i + len(" AND ")
+    terms.append(expression[start:].strip())
+    return terms
+
+
+def _has_top_level(expression, operator):
+    depth = 0
+    for i, c in enumerate(expression):
+        depth += {"(": 1, ")": -1}.get(c, 0)
+        if depth == 0 and expression.startswith(f" {operator} ", i):
+            return True
+    return False
+
+
+def license_expression(info):
+    """The wheel's licence expression: R's, zur's and every dependency's
+    licence ANDed, each term once, in that order (design §14, D21)."""
+    expressions = [info["inputs"]["r"]["license"], info["zur"]["license"]]
+    expressions += [d["license"] for d in info["inputs"]["dependencies"]]
+    terms = []
+    for expression in expressions:
+        for term in split_and(expression):
+            if _has_top_level(term, "OR"):
+                term = f"({term})"
+            if term not in terms:
+                terms.append(term)
+    return " AND ".join(terms)
+
+
+def licenses(runtime, info):
+    """R's and zur's licence texts, and a check of everyone's (design §14).
+
+    ``deps.py licenses`` put each dependency's under licenses/<name>/ in
+    the prefix; R's COPYING goes to licenses/r/ and zur's LICENSE to
+    licenses/zur/. Refuses an entry whose directory is missing or empty.
+    """
+    root = runtime / LICENSES
+    for name, source in [("r", runtime / R_COPYING), ("zur", REPO / "LICENSE")]:
+        (root / name).mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, root / name / source.name)
+    empty = [
+        d["name"]
+        for d in info["inputs"]["dependencies"]
+        if not (root / d["name"]).is_dir() or not any((root / d["name"]).iterdir())
+    ]
+    if empty:
+        raise SystemExit(f"licenses: no licence file for {', '.join(empty)}")
+    return sorted(
+        p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()
+    )
+
+
+def finish_build_info(runtime, version, files):
+    """BUILD-INFO.json in the wheel: the prefix's, with what the build adds.
+
+    Each dependency gets ``files`` (the wheel paths it bundles: its grafts,
+    or the font's faces); the top level gets zur's version and licence,
+    the licence expression, where the licence texts are, and
+    ``source_release``, the release holding the corresponding source,
+    which stage 14 fills (design §14).
+    """
+    path = runtime / "BUILD-INFO.json"
+    info = json.loads(path.read_text())
+    for d in info["inputs"]["dependencies"]:
+        d["files"] = sorted(files.get(d["name"], []))
+        if d["name"] == FONT_ENTRY:
+            d["files"] = [f"{R_HOME}/{FONTS_DIR}/{n}" for n in FONT_FILES]
+    info["zur"] = {"version": version, "license": ZUR_LICENSE}
+    info["license_expression"] = license_expression(info)
+    info["licenses"] = f"zur/_runtime/{LICENSES}"
+    info["source_release"] = None
+    path.write_text(json.dumps(info, indent=2) + "\n")
+    return info
 
 
 # 5. prune --------------------------------------------------------------------
@@ -711,7 +861,24 @@ def _record(data):
 MODULES = ["doctor.py"]
 
 
-def pack(stage, out, version, tag):
+def metadata(version, expression, license_files):
+    """The wheel's METADATA (core metadata 2.4, for PEP 639's fields)."""
+    return (
+        "Metadata-Version: 2.4\n"
+        "Name: zur\n"
+        f"Version: {version}\n"
+        "Summary: R, installable with pip and uv\n"
+        "Home-page: https://github.com/pedrobtz/py-zur\n"
+        f"License-Expression: {expression}\n"
+        + "".join(f"License-File: {f}\n" for f in license_files)
+        + "Keywords: R,r-language,statistics,uv\n"
+        "Requires-Python: >=3.8\n"
+    )
+
+
+def pack(stage, out, version, tag, expression, license_files):
+    """Write the wheel. The licence texts under zur/_runtime/licenses are
+    also the .dist-info's licenses/, where PEP 639 puts License-File."""
     package = stage / "zur"
     launcher = (REPO / "src/zur/__init__.py").read_text()
     launcher = _replace_once(launcher, '"0+unknown"', json.dumps(version), "launcher")
@@ -722,16 +889,8 @@ def pack(stage, out, version, tag):
 
     dist_info = stage / f"zur-{version}.dist-info"
     dist_info.mkdir()
-    (dist_info / "METADATA").write_text(
-        "Metadata-Version: 2.1\n"
-        "Name: zur\n"
-        f"Version: {version}\n"
-        "Summary: R, installable with pip and uv\n"
-        "Home-page: https://github.com/pedrobtz/py-zur\n"
-        "License: GPL-2.0-or-later\n"
-        "Keywords: R,r-language,statistics,uv\n"
-        "Requires-Python: >=3.8\n"
-    )
+    shutil.copytree(package / "_runtime" / LICENSES, dist_info / LICENSES)
+    (dist_info / "METADATA").write_text(metadata(version, expression, license_files))
     (dist_info / "WHEEL").write_text(
         "Wheel-Version: 1.0\n"
         "Generator: py-zur scripts/build.py\n"
@@ -866,6 +1025,10 @@ def main(argv=None):
     if not (Path(prefix) / "BUILD-INFO.json").exists():
         raise SystemExit(f"{prefix}/BUILD-INFO.json missing: run deps.py build-info")
 
+    if not (Path(prefix) / LICENSES).is_dir():
+        raise SystemExit(f"{prefix}/{LICENSES} missing: run deps.py licenses")
+    info = json.loads((Path(prefix) / "BUILD-INFO.json").read_text())
+
     stage = Path(tempfile.mkdtemp(prefix="zur-stage-"))
     runtime = stage / "zur/_runtime"
     shutil.copytree(prefix, runtime, symlinks=True)
@@ -873,10 +1036,21 @@ def main(argv=None):
     relocate(runtime, prefix, deps, r_version)
     fonts(runtime)
     blas(runtime)
-    grafts = repair(stage, runtime, deps)
+    grafts, found_at = repair(stage, runtime, deps)
     print(f"repair: grafted {len(grafts)} libraries")
     for name, graft in sorted(grafts.items()):
-        print(f"  {name} -> zur.libs/{graft}")
+        print(f"  {name} -> zur.libs/{graft}  ({found_at[name]})")
+    entries = info["inputs"]["dependencies"]
+    if os.environ.get("ZUR_MEASURE_PANGO") == "1":
+        # The D14 measurement grafts pango's chain, which no entry names;
+        # its wheel is never tested or published (roadmap stage 9).
+        try:
+            bundled = provenance(grafts, found_at, entries, deps)
+        except SystemExit as e:
+            print(f"ZUR_MEASURE_PANGO=1, not refused: {e}")
+            bundled = {}
+    else:
+        bundled = provenance(grafts, found_at, entries, deps)
     for pattern, files, size in prune(stage):
         print(f"prune: {pattern}: {files} files, {size} bytes")
     scrubbed = scrub(stage, [prefix, deps])
@@ -884,11 +1058,17 @@ def main(argv=None):
     for rel in scrubbed:
         print(f"  {rel}")
     dedupe(stage)
+    info = finish_build_info(runtime, version, bundled)
+    license_files = licenses(runtime, info)
+    print(f"licenses: {len(license_files)} files")
+    print(f"License-Expression: {info['license_expression']}")
     left = build_paths(stage, [prefix, deps])
     if left:
         raise SystemExit("build prefix still named in:\n  " + "\n  ".join(left))
 
-    wheel = pack(stage, args.out, version, TAG)
+    wheel = pack(
+        stage, args.out, version, TAG, info["license_expression"], license_files
+    )
     shutil.rmtree(stage)
     print(f"wheel: {wheel} ({wheel.stat().st_size} bytes)")
     if args.size_report:

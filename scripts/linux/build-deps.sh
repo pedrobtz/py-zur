@@ -83,5 +83,11 @@ while read -r name url sha; do
   tar -xf "$file" -C "$work"
   echo "== $name"
   (cd "$work/$top" && "build_$name")
+  # The licence texts the wheel ships (design §14), kept with the build so
+  # a cached $ZUR_DEPS has them too.
+  "$py" "$deps_py" license-files "$name" | while IFS= read -r file; do
+    mkdir -p "$deps/share/licenses/$name"
+    cp "$work/$top/$file" "$deps/share/licenses/$name/$(basename "$file")"
+  done
 done <<<"$sources"
 echo "Dependency build time ($(echo $(cut -d' ' -f1 <<<"$sources"))): $((SECONDS - start)) s"

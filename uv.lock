@@ -95,6 +95,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "auditwheel" },
+    { name = "packaging" },
     { name = "pytest" },
     { name = "pytest-randomly", version = "5.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pytest-randomly", version = "5.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -111,6 +112,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "auditwheel", specifier = ">=6.2" },
+    { name = "packaging", specifier = ">=24.2" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-randomly", specifier = ">=3.15" },
     { name = "ruff", specifier = ">=0.8" },

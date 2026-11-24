@@ -10,3 +10,7 @@ perl
 xz
 # gperf: fontconfig's object hash (src/fcobjshash.h), built by build-deps.sh.
 gperf
+# cpio: unpacks the source RPM a licence file is taken from (deps.py licenses).
+cpio
+# bzip2: unpacks libxcb's .tar.bz2 from its source RPM.
+bzip2

@@ -426,3 +426,137 @@ def test_makeconf_picks_the_cxx_standard_per_host(members):
     # The explicit standards stay as the build's compiler set them.
     for std in ["17", "20", "23", "26"]:
         assert f"CXX{std}STD = -std=gnu++{std}" in makeconf
+
+
+# Licences and build info (roadmap stage 13, design §14) ----------------------
+
+DIST_INFO = f"zur-{R_VERSION}.dist-info"
+LICENSES = f"{RUNTIME}/licenses/"
+DIST_LICENSES = f"{DIST_INFO}/licenses/"
+
+
+@pytest.fixture(scope="session")
+def build_info(members):
+    return json.loads(members[f"{RUNTIME}/BUILD-INFO.json"][1])
+
+
+@pytest.fixture(scope="session")
+def metadata(members):
+    from packaging.metadata import Metadata
+
+    text = members[f"{DIST_INFO}/METADATA"][1].decode()
+    return Metadata.from_email(text, validate=True)
+
+
+def and_terms(expression):
+    """The top-level AND terms of an SPDX expression, parentheses kept."""
+    terms, depth, term = [], 0, ""
+    for word in expression.split(" "):
+        depth += word.count("(") - word.count(")")
+        if word == "AND" and depth == 0:
+            terms.append(term.strip())
+            term = ""
+        else:
+            term += " " + word
+    return terms + [term.strip()]
+
+
+def test_every_entry_has_its_licence_files(members, build_info):
+    # Completeness: licenses/<name>/ is non-empty for R, zur and every
+    # BUILD-INFO.json entry, and holds no directory for anything else.
+    names = ["r", "zur"] + [d["name"] for d in build_info["inputs"]["dependencies"]]
+    dirs = {}
+    for name, (_, data) in members.items():
+        if name.startswith(LICENSES):
+            entry, _, file = name[len(LICENSES) :].partition("/")
+            assert data, name
+            dirs.setdefault(entry, []).append(file)
+    assert sorted(dirs) == sorted(names)
+    for d in build_info["inputs"]["dependencies"]:
+        assert sorted(dirs[d["name"]]) == sorted(
+            Path(f).name for f in d["license_files"]
+        ), d["name"]
+
+
+def test_every_bundled_elf_file_is_rs_or_an_entrys(elfs, build_info):
+    # Completeness: each grafted file is listed in exactly one entry's
+    # `files`, and every other ELF file is R's own (under _runtime).
+    owners = {}
+    for d in build_info["inputs"]["dependencies"]:
+        for f in d["files"]:
+            owners.setdefault(f, []).append(d["name"])
+    for name in elfs:
+        if name.startswith("zur.libs/"):
+            assert len(owners.get(name, [])) == 1, (name, owners.get(name))
+        else:
+            assert name.startswith(f"{RUNTIME}/"), name
+    listed = {f for f in owners if f.startswith("zur.libs/")}
+    assert listed == {n for n in elfs if n.startswith("zur.libs/")}
+
+
+def test_every_entry_bundles_files(members, build_info):
+    # An entry with sonames bundles one graft per soname; the font, its faces.
+    for d in build_info["inputs"]["dependencies"]:
+        assert len(d["files"]) == (len(d["sonames"]) if d["sonames"] else 4), d["name"]
+        for f in d["files"]:
+            assert f in members, (d["name"], f)
+    (font,) = [d for d in build_info["inputs"]["dependencies"] if not d["sonames"]]
+    assert font["files"] == [
+        f"{RUNTIME}/lib/R/share/fonts/LiberationSans-{face}.ttf"
+        for face in ["Regular", "Bold", "Italic", "BoldItalic"]
+    ]
+
+
+def test_license_files_match_the_licences_exactly(members, metadata):
+    # PEP 639: one License-File per file of the .dist-info's licenses/,
+    # which mirrors zur/_runtime/licenses/ byte for byte.
+    runtime = {
+        n[len(LICENSES) :]: d for n, (_, d) in members.items() if n.startswith(LICENSES)
+    }
+    dist = {
+        n[len(DIST_LICENSES) :]: d
+        for n, (_, d) in members.items()
+        if n.startswith(DIST_LICENSES)
+    }
+    assert dist == runtime
+    assert sorted(str(f) for f in metadata.license_files) == sorted(dist)
+
+
+def test_license_expression_is_every_entrys(metadata, build_info):
+    # Design §14, D21: R's licence and every entry's, ANDed, each term once.
+    from packaging.licenses import canonicalize_license_expression
+
+    expression = str(metadata.license_expression)
+    assert expression == build_info["license_expression"]
+    assert canonicalize_license_expression(expression) == expression
+    licences = [build_info["inputs"]["r"]["license"], build_info["zur"]["license"]]
+    licences += [d["license"] for d in build_info["inputs"]["dependencies"]]
+    expected = set()
+    for licence in licences:
+        expected |= {
+            t if " OR " not in t or t.startswith("(") else f"({t})"
+            for t in and_terms(licence)
+        }
+    terms = and_terms(expression)
+    assert len(terms) == len(set(terms))
+    assert set(terms) == expected
+    assert metadata.license is None
+
+
+def test_build_info_names_every_source(build_info):
+    # Each entry's corresponding source: tarball or source RPM with URL
+    # and SHA-256, or null with a reason; the release stage 14 fills.
+    for d in build_info["inputs"]["dependencies"]:
+        source = d["source"]
+        if source is None:
+            assert d["reason"] and d["looked_in"], d["name"]
+            continue
+        assert source["kind"] == ("tarball" if d["origin"] == "source" else "srpm")
+        assert source["url"].startswith("https://"), d["name"]
+        assert re.fullmatch(r"[0-9a-f]{64}", source["sha256"]), d["name"]
+        if source["kind"] == "srpm":
+            assert source["url"].endswith(f"/{source['name']}.src.rpm")
+    assert build_info["inputs"]["r"]["license"] == "GPL-2.0-or-later"
+    assert build_info["zur"] == {"version": R_VERSION, "license": "GPL-2.0-or-later"}
+    assert build_info["licenses"] == f"{RUNTIME}/licenses"
+    assert "source_release" in build_info and build_info["source_release"] is None

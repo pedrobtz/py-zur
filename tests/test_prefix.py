@@ -198,16 +198,45 @@ def test_graphics_versions_reach_r(component, name):
     assert first_version(r_named("grSoftVersion()")[component]) == PINNED[name]
 
 
+def expected_source(e):
+    # Design §14: the tarball of a built entry, the source RPM of an image
+    # entry (stage 13; every committed image entry has one).
+    if e["origin"] == "source":
+        return {"kind": "tarball", "url": e["url"], "sha256": e["sha256"]}
+    return {
+        "kind": "srpm",
+        "name": e["srpm"]["nvr"],
+        "url": e["srpm"]["url"],
+        "sha256": e["srpm"]["sha256"],
+    }
+
+
 def test_build_info_lists_the_manifest_and_r():
     info = json.loads((PREFIX / "BUILD-INFO.json").read_text())["inputs"]
     assert info["r"] == {
         "version": R_SOURCE["R_VERSION"],
         "url": R_SOURCE["R_URL"],
         "sha256": R_SOURCE["R_SHA256"],
+        "license": "GPL-2.0-or-later",
     }
     image = (REPO / "scripts/linux/image").read_text().splitlines()[-1]
     assert info["image"] == image
-    assert info["dependencies"] == MANIFEST
+    assert info["dependencies"] == [
+        {**e, "source": expected_source(e)} for e in MANIFEST
+    ]
+
+
+def test_licenses_hold_every_entrys_files():
+    # deps.py licenses (roadmap stage 13): licenses/<name>/ holds a
+    # non-empty file for each licence file the entry lists, and nothing
+    # else; R's and zur's are added by scripts/build.py.
+    root = PREFIX / "licenses"
+    assert sorted(p.name for p in root.iterdir()) == sorted(e["name"] for e in MANIFEST)
+    for e in MANIFEST:
+        got = sorted(p.name for p in (root / e["name"]).iterdir())
+        assert got == sorted(Path(f).name for f in e["license_files"]), e["name"]
+        for f in got:
+            assert (root / e["name"] / f).stat().st_size > 0, (e["name"], f)
 
 
 # Libraries no manifest entry needs to name: R's own, the Fortran runtime
