@@ -95,6 +95,11 @@ def dynamic(path):
     return [], None, []
 
 
+def text_section(path):
+    with path.open("rb") as f:
+        return ELFFile(f).get_section_by_name(".text").data()
+
+
 @pytest.fixture(scope="session")
 def elfs(tree, members):
     found = {}
@@ -177,15 +182,15 @@ def test_r_lib_holds_only_r_libraries_and_blas_names(members):
     ]
 
 
-def test_blas_names_are_copies_of_r_blas(members, elfs):
+def test_blas_names_are_copies_of_r_blas(tree, elfs):
     lib = f"{RUNTIME}/lib/R/lib/"
     for name, source in [
         ("libblas.so.3", "libRblas.so"),
         ("liblapack.so.3", "libRlapack.so"),
     ]:
         assert elfs[lib + name][1] == name
-        # Same code: the SONAME is the only difference, so the sizes match.
-        assert len(members[lib + name][1]) == len(members[lib + source][1])
+        # Same code: patchelf changed only the dynamic section.
+        assert text_section(tree / lib / name) == text_section(tree / lib / source)
         assert elfs[lib + name][0] == elfs[lib + source][0]
 
 

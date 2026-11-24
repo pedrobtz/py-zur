@@ -43,9 +43,9 @@ R_VERSION = dict(line.split("=", 1) for line in lines(REPO / "scripts/linux/r-so
 ]
 
 
-def run(args, env=None, **kwargs):
+def run(args, env=None, timeout=300, **kwargs):
     return subprocess.run(
-        args, capture_output=True, text=True, env=env, timeout=300, **kwargs
+        args, capture_output=True, text=True, env=env, timeout=timeout, **kwargs
     )
 
 
@@ -148,24 +148,25 @@ def test_blas_and_lapack_known_answer(r_home):
 
 
 @pytest.mark.parametrize(
-    ("var", "expected"),
-    [
-        ("CC", "gcc"),
-        ("CXX", "g++"),
-        ("FC", "gfortran"),
-        ("SHLIB_OPENMP_CFLAGS", "-fopenmp"),
-        ("SHLIB_OPENMP_CXXFLAGS", "-fopenmp"),
-        ("SHLIB_OPENMP_FFLAGS", "-fopenmp"),
-    ],
+    ("var", "expected"), [("CC", "gcc"), ("CXX", "g++"), ("FC", "gfortran")]
 )
 def test_makeconf_names_the_machine_compilers(var, expected):
-    # D5, D17. The compiler is the plain name; configure's standard flag
-    # (for example -std=gnu++20) may follow it.
+    # D5. The compiler is the plain name; configure's standard flag (for
+    # example -std=gnu++20) may follow it.
     result = run(["R", "CMD", "config", var])
     assert result.returncode == 0, result.stderr
     words = result.stdout.split()
     assert words[0] == expected
     assert all(w.startswith("-std=") for w in words[1:]), words
+
+
+@pytest.mark.parametrize("lang", ["C", "CXX", "F"])
+def test_makeconf_openmp_flags(r_home, lang):
+    # D17: R is built without OpenMP, packages use the host's. `R CMD
+    # config` does not know these variables, so Makeconf is read itself.
+    makeconf = (r_home / "etc/Makeconf").read_text()
+    found = re.findall(rf"^SHLIB_OPENMP_{lang}FLAGS = (.*)$", makeconf, flags=re.M)
+    assert found == ["-fopenmp"]
 
 
 def test_time_zones():

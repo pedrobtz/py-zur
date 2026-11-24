@@ -480,7 +480,10 @@ def pack(stage, out, version, tag):
             zf.writestr(entry, data)
             lines.append(f"{rel},{_record(data)},{len(data)}")
         lines.append(f"{record_name},,")
-        zf.writestr(record_name, "\n".join(lines) + "\n")
+        entry = zipfile.ZipInfo(record_name, date_time=(1980, 1, 1, 0, 0, 0))
+        entry.compress_type = zipfile.ZIP_DEFLATED
+        entry.external_attr = (stat.S_IFREG | 0o644) << 16
+        zf.writestr(entry, "\n".join(lines) + "\n")
     return wheel
 
 
