@@ -19,7 +19,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | --- | --- | --- | --- | --- | --- |
 | 1 | [linux-64 wheel](#stage-1--linux-64-wheel) | quick | — | [#1](https://github.com/pedrobtz/py-zur/pull/1) | 2026-11-23 |
 | 2 | [Project identity and CI profiles](#stage-2--project-identity-and-ci-profiles) | quick | [#3](https://github.com/pedrobtz/py-zur/issues/3) | [#27](https://github.com/pedrobtz/py-zur/pull/27) | 2026-11-24 |
-| 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | [#4](https://github.com/pedrobtz/py-zur/issues/4) | | |
+| 3 | [R from source in manylinux](#stage-3--r-from-source-in-manylinux) | quick | [#4](https://github.com/pedrobtz/py-zur/issues/4) | [#28](https://github.com/pedrobtz/py-zur/pull/28) | 2026-11-24 |
 | 4 | [Pinned dependencies](#stage-4--pinned-dependencies) | quick | [#5](https://github.com/pedrobtz/py-zur/issues/5) | | |
 | 5 | [Repair and the Linux x86_64 wheel](#stage-5--repair-and-the-linux-x86_64-wheel) | quick | [#6](https://github.com/pedrobtz/py-zur/issues/6) | | |
 | 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | | |
@@ -63,7 +63,10 @@ R package profiles are replaced by two of its own, both in
   the two minimal images (`debian:12-slim`, `rockylinux:8-minimal`) from
   stage 6 on. Target: under 20 minutes with a warm dependency cache,
   measured in stage 5 and recorded here. (1 min 46 s for the prototype
-  after #1, which built nothing from source.)
+  after #1, which built nothing from source.) R alone, from source in
+  the `r-source` job: 147 to 189 s (two runs) for `configure`, `make -j4` and
+  `make install` on `ubuntu-latest`'s 4 cores, plus about 40 s of
+  `dnf install` (stage 3, 2026-11-24).
 - **full** (`full-ci` label, weekly schedule, dispatch, and every run of
   the release workflow): quick, plus the host compiler matrix of stage
   10, plus every other platform leg that exists by then: Linux aarch64
@@ -222,6 +225,25 @@ from the machine, and the result runs inside the build container.
 - The build time of R alone is recorded in the CI profiles section.
 - Quick profile green, prototype jobs included.
 
+**Deviations.** 2026-11-24:
+- The static link failed (design [§18.1](design.md#181-measurements-2026-11-24-stage-3)):
+  `libgfortran.a(async.o)` has a local-exec TLS relocation that
+  cannot go into `libRlapack.so`. The fallback is taken: R links the
+  shared `libgfortran.so.5` and `libquadmath.so.0`, and the graft under
+  a hashed name is the first item of stage 5's Work. The hashed name
+  exists only after stage 5's repair, so the static-runtime test is
+  replaced here by an interim one: no ELF file needs `libgomp.so.1`,
+  and exactly R's own libraries (a committed list in
+  `tests/test_prefix.py`) need the Fortran runtime. Stage 5's build
+  check accepts only the hashed name.
+- `-static-libgfortran` is not what the attempt used: R links its
+  libraries with `gcc`, which ignores it, so the attempt named the
+  archives in `FLIBS` (`-l:libgfortran.a -l:libquadmath.a`).
+- `configure` runs with `LIBnn=lib`, so `R_HOME` is `lib/R` as §6.3
+  names it (recorded in §6.2).
+- The job is `r-source`; it runs the pinned image with `docker run` so
+  the digest is read from the committed file `scripts/linux/image`.
+
 **Design.** [§6.1](design.md#61-build-environment), [§6.2](design.md#62-configure),
 [§15 D1, D4, D8, D14, D17](design.md#15-decisions),
 [§16](design.md#16-open-questions) question 1.
@@ -287,6 +309,12 @@ prototype's build and test jobs.
 with nothing pointing at the build.
 
 **Work.**
+- The Fortran runtime graft (stage 3 took the fallback, 2026-11-24):
+  the image's `libgfortran.so.5` and `libquadmath.so.0` (gcc 8.5) copied
+  into `zur.libs/` under hashed names, and the `DT_NEEDED` of exactly
+  the files `tests/test_prefix.py` lists in `FORTRAN_USERS` rewritten
+  to them. The build check accepts only the hashed names, replacing
+  stage 3's interim test.
 - Repair as in [§6.3](design.md#63-repair-and-relocation): every shared
   library outside the manylinux allowlist bundled; RPATHs rewritten to
   `$ORIGIN`-relative ones; grafts with hashed names in `zur.libs/`.
