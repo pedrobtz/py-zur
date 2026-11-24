@@ -298,6 +298,9 @@ def relocate_makeconf(path, prefix, deps):
         text,
         flags=re.M,
     )
+    # TEMPORARY (stage 10, seen to fail): standards behind the flags' backs.
+    text = re.sub(r"^CXXFLAGS = (.*)$", r"CXXFLAGS = \1 -std=gnu++17", text, flags=re.M)
+    text = re.sub(r"^CXX26FLAGS = (.*)$", r"CXX26FLAGS = \1 -std=gnu++23", text, flags=re.M)
     path.write_text(text.replace(prefix, "$(R_HOME)/../.."))
 
 
