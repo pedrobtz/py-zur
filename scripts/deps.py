@@ -152,7 +152,7 @@ def build_info(entries, r_source, image):
                 "sha256": r["R_SHA256"],
             },
             "image": image_ref(image),
-            "dependencies": entries,
+            "dependencies": entries[:-1],  # TEMPORARY BREAK
         }
     }
 

@@ -71,7 +71,7 @@ build() {
   # image's /usr/local/lib/pkgconfig for the same reason; pkg-config still
   # searches the system's own directories.
   PATH="$deps/bin:$PATH" PKG_CONFIG_PATH="$deps/lib/pkgconfig" \
-    CPPFLAGS="-I$deps/include" LDFLAGS="-L$deps/lib" \
+    CPPFLAGS="-I$deps/include -I/usr/local/include" LDFLAGS="-L$deps/lib" \
     LIBnn=lib ./configure --prefix="$prefix" \
     --enable-R-shlib --enable-memory-profiling \
     --without-x --without-tcltk --without-aqua \

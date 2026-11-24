@@ -1,3 +1,4 @@
+# TEMPORARY BREAK (stage 4, seen to fail): revert before merge.
 # Every library R is built against on Linux (design §6.1, §11), for the
 # manylinux_2_28 image named in scripts/linux/image. Read by
 # scripts/deps.py; the CI cache of the libraries built from source is
@@ -26,7 +27,7 @@
 
 [[dependency]]
 name = "openssl"
-version = "3.5.9"
+version = "3.5.8"
 origin = "source"
 url = "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz"
 sha256 = "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
@@ -36,7 +37,7 @@ why = "The image's 1.1.1k is past upstream end of life; 3.5 is the current LTS s
 
 [[dependency]]
 name = "curl"
-version = "8.23.0"
+version = "8.22.0"
 origin = "source"
 url = "https://curl.se/download/curl-8.23.0.tar.xz"
 sha256 = "8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
@@ -48,7 +49,7 @@ why = "The image's 7.61.1 is from 2018 and links the image's OpenSSL 1.1.1; R's 
 
 [[dependency]]
 name = "zlib"
-version = "1.2.11"
+version = "1.2.10"
 origin = "image"
 package = "zlib-devel"
 package_version = "1.2.11-25.el8"
@@ -58,7 +59,7 @@ why = "R-admin needs 1.2.5 or later; used for gzfile() and PNG, and by the curl 
 
 [[dependency]]
 name = "bzip2"
-version = "1.0.6"
+version = "1.0.5"
 origin = "image"
 package = "bzip2-devel"
 package_version = "1.0.6-28.el8_10"
@@ -68,7 +69,7 @@ why = "R-admin needs 1.0.6 or later; used for bzfile()."
 
 [[dependency]]
 name = "xz"
-version = "5.2.4"
+version = "5.2.3"
 origin = "image"
 package = "xz-devel"
 package_version = "5.2.4-4.el8_6"
@@ -78,7 +79,7 @@ why = "R-admin needs 5.0.3 or later; used for xzfile()."
 
 [[dependency]]
 name = "pcre2"
-version = "10.32"
+version = "10.31"
 origin = "image"
 package = "pcre2-devel"
 package_version = "10.32-4.el8_10"
@@ -88,7 +89,7 @@ why = "R-admin needs 10.30 or later, the release with the rewritten matcher."
 
 [[dependency]]
 name = "icu"
-version = "60.3"
+version = "60.2"
 origin = "image"
 package = "libicu-devel"
 package_version = "60.3-2.el8_1"
@@ -98,17 +99,17 @@ why = "R uses ICU for collation and iconv only; packages needing a newer ICU (st
 
 [[dependency]]
 name = "readline"
-version = "7.0"
+version = "6.3"
 origin = "image"
 package = "readline-devel"
 package_version = "7.0-10.el8"
 license = "GPL-3.0-or-later"
-sonames = ["libreadline.so.7"]
+sonames = []
 why = "R-admin needs 6.0 or later for all console features; used only by the interactive console."
 
 [[dependency]]
 name = "cairo"
-version = "1.15.12"
+version = "1.15.10"
 origin = "image"
 package = "cairo-devel"
 package_version = "1.15.12-6.el8"
