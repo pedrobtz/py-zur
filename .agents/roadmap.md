@@ -500,6 +500,11 @@ no `which`, and the environment it needs lives in R's own files.
   system `Rprofile` (decision on #7, design §6.4).
 - The font is a pinned "image" entry of `manifests/linux.toml`
   (`liberation-sans-fonts`, no sonames), not a fetched file.
+- With fontconfig 2.15 built, `auditwheel show` reports
+  `manylinux_2_27_x86_64`: the image's fontconfig was the only file
+  that needed a glibc 2.28 symbol. The wheel keeps the
+  `manylinux_2_28_x86_64` tag (D4), and stage 5's check now accepts any
+  `manylinux_2_N` with N ≤ 28.
 - The PDF check draws with `encoding = "WinAnsi"` (CP1252): `pdf()`'s
   default encoding has no euro sign, and the check requires empty
   stderr.

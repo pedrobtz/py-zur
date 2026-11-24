@@ -287,11 +287,10 @@ def test_time_zones(utc, zurich):
 def test_sys_which_without_usr_bin_which():
     # rockylinux:8-minimal has no /usr/bin/which; R must start cleanly and
     # Sys.which() must search PATH as the shell does.
-    result = rscript('cat(Sys.which(c("sh", "zur-no-such-program")), sep = "\\n")')
+    result = rscript('cat(Sys.which(c("sh", "zur-no-such-program")), sep = "|")')
     assert result.stderr == ""
-    found, missing = result.stdout.split("\n")
-    assert found == shutil.which("sh")
-    assert missing == ""
+    # A missing name gives "", not an error (the exit trap in WHICH).
+    assert result.stdout == f"{shutil.which('sh')}|"
 
 
 # Graphics headless (design §6.4, §13) ----------------------------------------
@@ -321,7 +320,7 @@ def test_bitmap_devices_use_cairo():
 
 def test_bitmap_type_set_by_the_user_wins():
     code = (
-        'options(bitmapType = "Xlib"); loadNamespace("grDevices");'
+        'options(bitmapType = "Xlib"); invisible(loadNamespace("grDevices"));'
         ' cat(getOption("bitmapType"))'
     )
     result = run(["Rscript", "--vanilla", "--default-packages=NULL", "-e", code])
@@ -345,18 +344,27 @@ def test_pdf_draws_text(tmp_path):
 def test_svg_draws_one_glyph_per_character(tmp_path):
     root = ElementTree.fromstring(draw(tmp_path, "text.svg", 'svg("{out}")'))
     assert root.tag == f"{SVG_NS}svg"
-    # cairo defines each glyph it draws once (glyph0-1, …); a font without
-    # the characters draws them all as the same box, and the space's glyph
-    # has no outline.
-    glyphs = [
-        el for el in root.iter() if re.fullmatch(r"glyph-?\d+-\d+", el.get("id", ""))
+    # cairo defines each glyph once (glyph0-1, …) and draws the text as one
+    # <use> per character. A font without the characters draws them all as
+    # the same box, so the characters and the glyphs they use must match
+    # one to one.
+    href = "{http://www.w3.org/1999/xlink}href"
+    used = [
+        el.get(href).lstrip("#")
+        for el in root.iter(f"{SVG_NS}use")
+        if re.fullmatch(r"#glyph-?\d+-\d+", el.get(href, ""))
     ]
-    outlines = {
+    # cairo may or may not draw the spaces' empty glyph.
+    chars = TEXT if len(used) == len(TEXT) else TEXT.replace(" ", "")
+    assert len(used) == len(chars), used
+    pairs = set(zip(chars, used, strict=True))
+    assert len(pairs) == len(set(chars)) == len(set(used)), sorted(pairs)
+    defined = {
         el.get("id")
-        for el in glyphs
-        if any(p.get("d", "").strip() for p in el.iter(f"{SVG_NS}path"))
+        for el in root.iter()
+        if re.fullmatch(r"glyph-?\d+-\d+", el.get("id", ""))
     }
-    assert len(outlines) == len(set(TEXT.replace(" ", "")))
+    assert set(used) <= defined
 
 
 def test_cairo_device_loads_its_grafted_libraries(tmp_path):

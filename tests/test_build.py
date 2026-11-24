@@ -171,7 +171,9 @@ def test_auditwheel_show_reports_manylinux_2_28():
     )
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
-    assert report["overall_tag"] == TAG, report
+    # The tag promises glibc 2.28 (D4); the wheel may need less.
+    m = re.fullmatch(r"manylinux_2_(\d+)_x86_64", report["overall_tag"])
+    assert m and int(m[1]) <= 28, report
     # Allowlisted libraries are not external; anything else would be.
     assert report["external_libs"] == {}
 
