@@ -162,6 +162,64 @@ by digest. The shared libraries R needs are bundled under hashed names,
 so they never clash with the machine's. macOS and Windows will use
 CRAN's own binaries.
 
+## What each wheel bundles
+
+### Linux x86_64
+
+R itself, built from source, and its own libraries in `lib/R/lib`:
+
+| File | What it is |
+| --- | --- |
+| `libR.so` | R |
+| `libRblas.so`, `libRlapack.so` | R's reference BLAS and LAPACK |
+| `libblas.so.3`, `liblapack.so.3` | Copies of those two, under the names P3M's Debian, Ubuntu and RHEL 8 binaries link |
+| `libflexiblas.so.3` | A stub with no code of its own that loads R's BLAS and LAPACK, for P3M's RHEL 9 binaries |
+
+So every package uses R's reference BLAS, never the machine's. The
+libraries below are bundled in `zur.libs/` under hashed names, so they
+never clash with the machine's own copies:
+
+| Library | Version | From | Licence | Needed by |
+| --- | --- | --- | --- | --- |
+| OpenSSL | 3.5.9 | source | Apache-2.0 | libcurl |
+| curl (libcurl) | 8.23.0 | source | curl | `download.file()`, `url()` |
+| fontconfig | 2.15.0 | source | HPND-sell-variant and others | text in plots |
+| zlib | 1.2.11 | AlmaLinux 8 | Zlib | R |
+| bzip2 | 1.0.6 | AlmaLinux 8 | bzip2-1.0.6 | R |
+| xz (liblzma) | 5.2.4 | AlmaLinux 8 | public domain | R |
+| PCRE2 | 10.32 | AlmaLinux 8 | BSD-3-Clause | R's regular expressions |
+| ICU | 60.3 | AlmaLinux 8 | Unicode-DFS-2016 and others | collation and text handling |
+| readline | 7.0 | AlmaLinux 8 | GPL-3.0-or-later | the interactive console |
+| ncurses (libtinfo) | 6.1 | AlmaLinux 8 | X11-style | readline |
+| cairo | 1.15.12 | AlmaLinux 8 | LGPL-2.1-only or MPL-1.1 | `png()`, `pdf()`, `svg()` |
+| pixman | 0.38.4 | AlmaLinux 8 | MIT | cairo |
+| libX11, libXext, libXrender, libxcb, libXau | 1.6.8, 1.3.4, 0.9.10, 1.13.1, 1.0.9 | AlmaLinux 8 | MIT and X11 family | cairo (no display is used) |
+| FreeType | 2.9.1 | AlmaLinux 8 | FTL or GPL-2.0-or-later | fonts |
+| expat | 2.5.0 | AlmaLinux 8 | MIT | fontconfig |
+| libpng | 1.6.34 | AlmaLinux 8 | Libpng | `png()` |
+| libjpeg-turbo | 1.5.3 | AlmaLinux 8 | IJG, BSD-3-Clause, Zlib | `jpeg()` |
+| libtiff | 4.0.9 | AlmaLinux 8 | libtiff | `tiff()` |
+| jbigkit | 2.1 | AlmaLinux 8 | GPL-2.0-or-later | libtiff |
+| libgfortran, libquadmath | 8.5.0 | AlmaLinux 8 | GPL-3.0-or-later with the GCC runtime exception; LGPL-2.1-or-later | R's Fortran code (LAPACK) |
+| Liberation Sans | 2.00.3 | AlmaLinux 8 | OFL-1.1-RFN | the one font, for text in plots |
+
+"Source" means built in the wheel's build from a release tarball,
+pinned by SHA-256; "AlmaLinux 8" means taken from the build image's
+packages, pinned to an exact version. From the machine R uses only
+glibc, `libgcc_s` and `libstdc++`, which every `manylinux_2_28` system
+has; binary packages also need the OpenMP and Fortran runtimes
+`zur doctor` names. No compiler is bundled.
+
+### Other platforms (planned)
+
+| Wheel | What it will bundle |
+| --- | --- |
+| Linux aarch64 | The same set as Linux x86_64, built the same way for ARM |
+| macOS arm64, macOS x86_64 | CRAN's R installer, unpacked and unmodified, with the libraries CRAN ships in it (among them `libgfortran`, `libgcc_s` and `libomp`); without Tcl/Tk, the X11 module and `R.app`. `svg()` needs XQuartz on the machine |
+| Windows x86_64 | CRAN's R installer, unpacked without being run, with the libraries CRAN builds into R; without `Rgui.exe` and Tcl/Tk. Source packages need Rtools on the machine |
+
+## Inputs and sources
+
 Each wheel's `zur/_runtime/BUILD-INFO.json` lists every bundled
 library with its version, licence and source. The sources of everything
 a release bundles will be on that version's GitHub release.
