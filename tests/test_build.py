@@ -264,3 +264,47 @@ def test_record_matches_the_members(members):
 def test_no_member_contains_the_build_prefix(members):
     found = [n for n, (_, data) in members.items() if BUILD_PREFIX.encode() in data]
     assert found == []
+
+
+# Headless runtime files (design §5, §6.4, roadmap stage 6) -------------------
+
+
+@pytest.mark.parametrize("where", ["bin/Rscript", "lib/R/bin/Rscript"])
+def test_rscript_front_ends_are_scripts(members, where):
+    info, data = members[f"{RUNTIME}/{where}"]
+    mode = info.external_attr >> 16
+    assert stat.S_ISREG(mode) and mode & 0o111
+    assert data[:4] != b"\x7fELF"
+    assert data.startswith(b"#!/bin/sh\n")
+    assert b'exec "${RHOME}/bin/exec/Rscript" "$@"\n' in data
+
+
+def test_compiled_rscript_is_only_in_exec(members, elfs):
+    compiled = sorted(n for n in elfs if Path(n).name == "Rscript")
+    assert compiled == [f"{RUNTIME}/lib/R/bin/exec/Rscript"]
+    _, data = members[compiled[0]]
+    assert BUILD_PREFIX.encode() not in data
+
+
+def test_font_family_and_fontconfig_file(members):
+    fonts = f"{RUNTIME}/lib/R/share/fonts/"
+    faces = sorted(n[len(fonts) :] for n in members if n.startswith(fonts))
+    assert faces == [
+        "LiberationSans-Bold.ttf",
+        "LiberationSans-BoldItalic.ttf",
+        "LiberationSans-Italic.ttf",
+        "LiberationSans-Regular.ttf",
+    ]
+    for face in faces:
+        assert members[fonts + face][1][:4] == b"\x00\x01\x00\x00"  # TrueType
+    conf = members[f"{RUNTIME}/lib/R/etc/fonts/fonts.conf"][1].decode()
+    assert '<dir prefix="relative">../../share/fonts</dir>' in conf
+
+
+def test_internal_tzcode(members):
+    # Confirms --with-internal-tzcode (design §6.2) in configure's own
+    # record of its call, and R's zoneinfo shipped with it.
+    makeconf = members[f"{RUNTIME}/lib/R/etc/Makeconf"][1].decode()
+    (call,) = [s for s in makeconf.splitlines() if s.startswith("# configure ")]
+    assert "'--with-internal-tzcode'" in call
+    assert f"{RUNTIME}/lib/R/share/zoneinfo/Europe/Zurich" in members

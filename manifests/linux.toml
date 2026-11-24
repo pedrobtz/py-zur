@@ -21,6 +21,9 @@
 # library comes from the image: R needs no newer version than AlmaLinux 8
 # ships (R-admin's minimums are quoted), and R uses each on local data.
 # Versions are the newest in AlmaLinux 8's repositories on 2026-11-24.
+#
+# Decided 2026-11-24 (stage 6): the font family the wheel ships (design
+# §6.4) is pinned here too, as an "image" entry with no sonames.
 
 # --- Built from source -----------------------------------------------------
 
@@ -165,3 +168,15 @@ package_version = "4.0.9-39.el8_10"
 license = "libtiff"
 sonames = ["libtiff.so.5"]
 why = "R's tiff() needs libtiff 4's API; R only writes TIFF files."
+
+# --- Shipped as files --------------------------------------------------------
+
+[[dependency]]
+name = "liberation-sans-fonts"
+version = "2.00.3"
+origin = "image"
+package = "liberation-sans-fonts"
+package_version = "1:2.00.3-7.el8"
+license = "OFL-1.1-RFN"
+sonames = []
+why = "No library: scripts/build.py copies its four TrueType faces into the wheel for headless graphics (design §6.4); any 2.x has the Latin, Greek and Cyrillic glyphs, the euro sign among them."

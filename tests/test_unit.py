@@ -21,6 +21,7 @@ import sys
 import tarfile
 import textwrap
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
@@ -490,7 +491,10 @@ def sh(script, *args, env=None):
 
 
 # What bin/R exports, printed instead of starting R.
-PRINT_ENV = 'echo "$R_HOME|$RHOME|$R_SHARE_DIR|$CURL_CA_BUNDLE|$SSL_CERT_FILE"'
+PRINT_ENV = (
+    'echo "$R_HOME|${RHOME-unset}|$R_SHARE_DIR|$CURL_CA_BUNDLE|$SSL_CERT_FILE'
+    '|$FONTCONFIG_FILE"'
+)
 
 
 @pytest.mark.parametrize("where", ["lib/R/bin/R", "bin/R"])
@@ -508,11 +512,123 @@ def test_front_end_finds_r_home_from_its_own_location(tmp_path, where):
         env={"PATH": os.environ["PATH"], "CURL_CA_BUNDLE": "/x.pem"},
     )
     assert result.returncode == 0, result.stderr
-    r_home, rhome, share, curl, ssl = result.stdout.strip().split("|")
-    assert (r_home, rhome, share) == (str(home), str(home), f"{home}/share")
+    r_home, rhome, share, curl, ssl, fonts = result.stdout.strip().split("|")
+    assert (r_home, share) == (str(home), f"{home}/share")
+    # bin/Rscript, not bin/R, sets RHOME (design §5).
+    assert rhome == "unset"
+    assert fonts == f"{home}/etc/fonts/fonts.conf"
     assert curl == "/x.pem"  # the user's value wins
     if Path("/etc/ssl/certs/ca-certificates.crt").exists():
         assert ssl == "/etc/ssl/certs/ca-certificates.crt"
+
+
+def test_front_end_keeps_the_users_fontconfig_file(tmp_path):
+    path = front_end(tmp_path, "bin/R")
+    path.write_text(
+        path.read_text().replace('exec "${R_HOME}/bin/exec/R" "$@"', PRINT_ENV)
+    )
+    env = {"PATH": os.environ["PATH"], "FONTCONFIG_FILE": "/my/fonts.conf"}
+    result = sh(f'sh "{path}"', env=env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().split("|")[-1] == "/my/fonts.conf"
+
+
+# What the compiled Rscript would see, printed instead of starting R.
+FAKE_RSCRIPT = """\
+#!/bin/sh
+echo "$0|$RHOME|${R_HOME-unset}"
+for a in "$@"; do echo "$a"; done
+"""
+
+
+@pytest.fixture
+def rscript_runtime(tmp_path):
+    """A runtime after wrap_rscript, its compiled Rscript a fake that echoes."""
+    runtime = tmp_path / "runtime"
+    for d in ["bin", "lib/R/bin/exec"]:
+        (runtime / d).mkdir(parents=True)
+    for p in [runtime / "bin/Rscript", runtime / "lib/R/bin/Rscript"]:
+        p.write_bytes(tiny_elf(["libc.so.6"]))
+    build.wrap_rscript(runtime)
+    fake = runtime / "lib/R/bin/exec/Rscript"
+    assert fake.read_bytes()[:4] == b"\x7fELF"  # the binary moved there
+    fake.write_text(FAKE_RSCRIPT)
+    fake.chmod(0o755)
+    return runtime
+
+
+@pytest.mark.parametrize("where", ["lib/R/bin/Rscript", "bin/Rscript"])
+def test_rscript_wrapper_sets_rhome_from_its_location(rscript_runtime, where):
+    # Moved, then started by a relative path from elsewhere, with another
+    # R's RHOME and R_HOME inherited: both are overridden, never honoured.
+    moved = rscript_runtime.parent / "moved dir"
+    rscript_runtime.rename(moved)
+    home = (moved / "lib/R").resolve()
+    env = {"PATH": os.environ["PATH"], "RHOME": "/other/R", "R_HOME": "/other/R"}
+    result = subprocess.run(
+        [f"./moved dir/{where}", "-e", "cat(1)", "a b"],
+        cwd=moved.parent,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    head, *args = result.stdout.splitlines()
+    assert head == f"{home}/bin/exec/Rscript|{home}|unset"
+    assert args == ["-e", "cat(1)", "a b"]
+
+
+def test_rscript_wrappers_are_executable_scripts(rscript_runtime):
+    for where in ["lib/R/bin/Rscript", "bin/Rscript"]:
+        path = rscript_runtime / where
+        assert path.read_text().startswith("#!/bin/sh\n")
+        assert path.stat().st_mode & 0o777 == 0o755
+
+
+def test_rscript_wrapper_needs_the_compiled_rscript(tmp_path):
+    runtime = tmp_path / "runtime"
+    (runtime / "lib/R/bin/exec").mkdir(parents=True)
+    (runtime / "lib/R/bin/Rscript").write_text("#!/bin/sh\n")
+    with pytest.raises(SystemExit, match="not the compiled Rscript"):
+        build.wrap_rscript(runtime)
+
+
+def test_fonts_ship_the_family_and_a_relative_fontconfig_file(tmp_path):
+    source = tmp_path / "liberation-sans"
+    source.mkdir()
+    for name in build.FONT_FILES:
+        (source / name).write_bytes(b"\x00\x01\x00\x00" + name.encode())
+    runtime = tmp_path / "runtime"
+    build.fonts(runtime, source)
+    home = runtime / "lib/R"
+    shipped = sorted(p.name for p in (home / build.FONTS_DIR).iterdir())
+    assert shipped == sorted(build.FONT_FILES)
+    for name in build.FONT_FILES:
+        assert (home / build.FONTS_DIR / name).read_bytes() == (
+            source / name
+        ).read_bytes()
+    conf = home / build.FONTS_CONF
+    assert conf.relative_to(home).as_posix() == "etc/fonts/fonts.conf"
+    root = ElementTree.parse(conf).getroot()
+    assert root.tag == "fontconfig"
+    dirs = root.findall("dir")
+    # The shipped fonts first, found relative to the file, then the system's.
+    assert dirs[0].get("prefix") == "relative"
+    assert (conf.parent / dirs[0].text).resolve() == (home / build.FONTS_DIR)
+    assert [d.text for d in dirs[1:3]] == ["/usr/share/fonts", "/usr/local/share/fonts"]
+    family = root.find("match/edit[@name='family']")
+    assert family.get("mode") == "append_last"
+    assert family.find("string").text == "Liberation Sans"
+    # Never the system's configuration (a newer fontconfig's elements).
+    assert root.find("include") is None
+
+
+def test_fonts_refuse_a_missing_face(tmp_path):
+    source = tmp_path / "empty"
+    source.mkdir()
+    with pytest.raises(SystemExit, match="LiberationSans-Regular.ttf missing"):
+        build.fonts(tmp_path / "runtime", source)
 
 
 def test_front_end_without_its_expected_lines_is_refused(tmp_path):
@@ -609,11 +725,9 @@ def test_placeholder_needs_room():
         build.placeholder("/zur")
 
 
-def test_launcher_sets_only_r_home_and_rhome():
-    base = {"R_HOME": "/other/R", "PATH": "/bin", "CURL_CA_BUNDLE": "/x"}
+def test_launcher_only_drops_r_home():
+    # bin/Rscript sets RHOME, bin/R everything else (design §5, D13); an
+    # inherited RHOME is left for bin/Rscript to override.
+    base = {"R_HOME": "/other/R", "RHOME": "/other/R", "PATH": "/bin"}
     env = launcher.environment(base)
-    assert env == {
-        "PATH": "/bin",
-        "CURL_CA_BUNDLE": "/x",
-        "RHOME": str(launcher.R_HOME),
-    }
+    assert env == {"PATH": "/bin", "RHOME": "/other/R"}

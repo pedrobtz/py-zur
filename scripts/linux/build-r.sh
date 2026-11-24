@@ -70,7 +70,12 @@ build() {
   # curl-config on PATH is that libcurl's. PKG_CONFIG_PATH replaces the
   # image's /usr/local/lib/pkgconfig for the same reason; pkg-config still
   # searches the system's own directories.
-  PATH="$deps/bin:$PATH" PKG_CONFIG_PATH="$deps/lib/pkgconfig" \
+  # ac_cv_path_WHICH: Sys.which() runs "<WHICH> 'name'" through sh, and
+  # configure would compile in the image's /usr/bin/which, which minimal
+  # images lack (design §6.4). The shell's own `command -v` searches PATH
+  # the same way; configure takes a cache variable as found.
+  ac_cv_path_WHICH="command -v" \
+    PATH="$deps/bin:$PATH" PKG_CONFIG_PATH="$deps/lib/pkgconfig" \
     CPPFLAGS="-I$deps/include" LDFLAGS="-L$deps/lib" \
     LIBnn=lib ./configure --prefix="$prefix" \
     --enable-R-shlib --enable-memory-profiling \

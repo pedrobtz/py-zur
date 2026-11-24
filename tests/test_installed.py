@@ -7,7 +7,10 @@ zur's:
     uv run pytest tests/test_installed.py
 
 Every check compares against a known answer rather than only running code.
-Set ZUR_OFFLINE=1 to skip the network check.
+Set ZUR_OFFLINE=1 to skip the network check. In CI, ZUR_CONTAINER names
+the image the tests run in (the matrix of build.yml), so the checks of
+what a minimal image lacks know where they are; ZUR_EXPECT_NO_CA_BUNDLE=1
+runs the no-bundle check, before the workflow installs one.
 """
 
 import os
@@ -16,6 +19,7 @@ import shutil
 import subprocess
 import textwrap
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
@@ -31,6 +35,16 @@ CA_BUNDLES = {
     "debian": "/etc/ssl/certs/ca-certificates.crt",
     "rocky": "/etc/pki/tls/certs/ca-bundle.crt",
 }
+# Every bundle bin/R looks for, in its order (scripts/build.py).
+CA_CANDIDATES = [
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/pki/tls/cacert.pem",
+    "/etc/ssl/cert.pem",
+]
+
+CONTAINER = os.environ.get("ZUR_CONTAINER", "")
 
 
 def lines(path):
@@ -65,6 +79,14 @@ def os_release_id():
     return re.search(r'^ID="?([^"\n]+)"?$', text, flags=re.M)[1]
 
 
+def without(*names, base=None):
+    """The environment without ``names``, as R started outside zur sees it."""
+    env = dict(os.environ if base is None else base)
+    for name in names:
+        env.pop(name, None)
+    return env
+
+
 @pytest.fixture(scope="session")
 def r_home():
     if shutil.which("Rscript") is None:
@@ -72,11 +94,23 @@ def r_home():
     return Path(rout("R.home()"))
 
 
-def test_linux_system_requirements():
-    # Base R compiles the path /usr/bin/which into Sys.which, and utils
-    # calls it on load; without it, every package but base fails to load.
-    # Minimal RHEL-family images lack it (design §6.4; stage 6 removes it).
-    assert Path("/usr/bin/which").exists(), "install the system 'which' package"
+# Minimal images ----------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    CONTAINER not in ("debian:12-slim", "rockylinux:8-minimal"),
+    reason="only the minimal images",
+)
+def test_minimal_image_lacks_what_zur_must_replace():
+    # Without this, the font, time-zone and which checks below could pass
+    # on an image that had what they test zur does without.
+    if CONTAINER == "debian:12-slim":
+        assert not Path("/usr/share/zoneinfo").exists()
+        fonts = Path("/usr/share/fonts")
+        assert not fonts.exists() or not any(p.is_file() for p in fonts.rglob("*"))
+    if CONTAINER == "rockylinux:8-minimal":
+        assert not Path("/usr/bin/which").exists()
+        assert shutil.which("which") is None
 
 
 # Front-ends ------------------------------------------------------------------
@@ -119,12 +153,68 @@ def test_rscript_started_from_r_finds_the_same_r(r_home):
 
 
 def test_rscript_started_from_r_without_the_launcher(r_home):
-    # bin/R exports RHOME (design §5): R started as $R_HOME/bin/R, with no
-    # RHOME from the launcher, still gives its Rscript children this R.
-    env = {k: v for k, v in os.environ.items() if k not in ("RHOME", "R_HOME")}
+    # R started as $R_HOME/bin/R, with no RHOME from anywhere, still gives
+    # its Rscript children this R: bin/Rscript sets RHOME (design §5).
+    env = without("RHOME", "R_HOME")
     result = run([str(r_home / "bin/R"), "--vanilla", "-s", "-e", CHILD_HOME], env=env)
     assert result.returncode == 0, result.stderr
     assert Path(result.stdout.strip()) == r_home
+
+
+# bin/Rscript is a script that sets RHOME from its own location (design §5):
+# R_HOME's, and the one in the prefix's bin/ next to bin/R.
+RSCRIPTS = ["lib/R/bin/Rscript", "bin/Rscript"]
+
+
+def bare_rscript(r_home, where):
+    return r_home.parent.parent / where
+
+
+@pytest.mark.parametrize("where", RSCRIPTS)
+def test_bare_rscript_finds_its_r(r_home, where):
+    result = run(
+        [str(bare_rscript(r_home, where)), "-e", "cat(R.home())"],
+        env=without("RHOME", "R_HOME"),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == str(r_home)
+
+
+@pytest.mark.parametrize("where", RSCRIPTS)
+def test_bare_rscript_overrides_an_inherited_home(r_home, where):
+    # D13: an inherited RHOME or R_HOME is overridden, never honoured.
+    env = dict(os.environ, RHOME="/nonexistent/R", R_HOME="/nonexistent/R")
+    result = run([str(bare_rscript(r_home, where)), "-e", "cat(R.home())"], env=env)
+    assert result.returncode == 0, result.stderr
+    assert (result.stdout, result.stderr) == (str(r_home), "")
+
+
+@pytest.mark.parametrize("where", RSCRIPTS)
+def test_rscript_as_a_script_interpreter(r_home, where, tmp_path):
+    script = tmp_path / "home.R"
+    script.write_text(f"#!{bare_rscript(r_home, where)}\ncat(R.home())\n")
+    script.chmod(0o755)
+    result = run([str(script)], env=without("RHOME", "R_HOME"))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == str(r_home)
+
+
+# Environment in R's own files (D13) -----------------------------------------
+
+ENV_VARS = ("FONTCONFIG_FILE", "CURL_CA_BUNDLE", "SSL_CERT_FILE")
+
+
+def test_environment_is_the_same_without_the_launcher(r_home):
+    code = f"cat(Sys.getenv(c({', '.join(map(repr, ENV_VARS))})), sep = '\\n')"
+    env = without("RHOME", "R_HOME", *ENV_VARS)
+    launched = run(["Rscript", "--vanilla", "-e", code], env=env)
+    bare = run([str(r_home / "bin/Rscript"), "--vanilla", "-e", code], env=env)
+    assert launched.returncode == 0 and bare.returncode == 0, bare.stderr
+    assert bare.stdout == launched.stdout
+    fonts, ca, ssl = bare.stdout.split("\n")
+    assert fonts == str(r_home / "etc/fonts/fonts.conf")
+    if any(Path(p).is_file() for p in CA_CANDIDATES):
+        assert ca == ssl == CA_BUNDLES[os_release_id()]
 
 
 # Base R ----------------------------------------------------------------------
@@ -174,12 +264,86 @@ def test_makeconf_openmp_flags(r_home, lang):
     assert found == ["-fopenmp"]
 
 
-def test_time_zones():
+@pytest.mark.parametrize(
+    ("utc", "zurich"),
+    [
+        ("2026-11-23 12:00", "2026-11-23 13:00:00 CET"),
+        ("2026-07-01 12:00", "2026-07-01 14:00:00 CEST"),
+    ],
+)
+def test_time_zones(utc, zurich):
+    # R's own zoneinfo (--with-internal-tzcode, design §6.2): debian:12-slim
+    # has no tzdata.
     code = (
-        'format(as.POSIXct("2026-11-23 12:00", tz = "UTC"), '
-        'tz = "Europe/Zurich", usetz = TRUE)'
+        f'format(as.POSIXct("{utc}", tz = "UTC"), tz = "Europe/Zurich", usetz = TRUE)'
     )
-    assert rout(code) == "2026-11-23 13:00:00 CET"
+    assert rout(code) == zurich
+
+
+# which (design §6.4) ---------------------------------------------------------
+
+
+def test_sys_which_without_usr_bin_which():
+    # rockylinux:8-minimal has no /usr/bin/which; R must start cleanly and
+    # Sys.which() must search PATH as the shell does.
+    result = rscript('cat(Sys.which(c("sh", "zur-no-such-program")), sep = "\\n")')
+    assert result.stderr == ""
+    found, missing = result.stdout.split("\n")
+    assert found == shutil.which("sh")
+    assert missing == ""
+
+
+def test_r_starts_with_empty_stderr():
+    result = run(["R", "--vanilla", "-q", "-s"], input="invisible(Sys.which('sh'))\n")
+    assert (result.returncode, result.stderr) == (0, "")
+
+
+# Graphics headless (design §6.4, §13) ----------------------------------------
+
+# Escapes, so the string is UTF-8 in R whatever the locale (CI's is C).
+TEXT = "Zürich 3 €"
+TEXT_R = '"Z\\u00fcrich 3 \\u20ac"'
+SVG_NS = "{http://www.w3.org/2000/svg}"
+
+
+def draw(tmp_path, name, device, text=True):
+    """``device`` (R code, ``{out}`` the file) with ``TEXT`` drawn on a plot."""
+    out = tmp_path / name
+    label = f"text(0.5, 0.5, {TEXT_R}, cex = 3); " if text else ""
+    code = device.format(out=out) + f"; plot.new(); {label}invisible(dev.off())"
+    result = run(["Rscript", "--vanilla", "-e", code], env=without("DISPLAY"))
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""  # no fontconfig error, no conversion warning
+    return out.read_bytes()
+
+
+def test_png_draws_text(tmp_path):
+    with_text = draw(tmp_path, "text.png", 'png("{out}")')
+    assert with_text[:8] == b"\x89PNG\r\n\x1a\n"
+    assert with_text != draw(tmp_path, "empty.png", 'png("{out}")', text=False)
+
+
+def test_pdf_draws_text(tmp_path):
+    # CP1252 has the euro sign; pdf()'s default, ISO Latin 1, has not.
+    pdf = draw(tmp_path, "text.pdf", 'pdf("{out}", encoding = "CP1252")')
+    assert pdf[:4] == b"%PDF"
+
+
+def test_svg_draws_one_glyph_per_character(tmp_path):
+    root = ElementTree.fromstring(draw(tmp_path, "text.svg", 'svg("{out}")'))
+    assert root.tag == f"{SVG_NS}svg"
+    # cairo defines each glyph it draws once (glyph0-1, …); a font without
+    # the characters draws them all as the same box, and the space's glyph
+    # has no outline.
+    glyphs = [
+        el for el in root.iter() if re.fullmatch(r"glyph-?\d+-\d+", el.get("id", ""))
+    ]
+    outlines = {
+        el.get("id")
+        for el in glyphs
+        if any(p.get("d", "").strip() for p in el.iter(f"{SVG_NS}path"))
+    }
+    assert len(outlines) == len(set(TEXT.replace(" ", "")))
 
 
 def test_cairo_device_loads_its_grafted_libraries(tmp_path):
@@ -202,6 +366,19 @@ def test_ca_bundle_is_the_system_one():
     }
     out = rout('Sys.getenv(c("CURL_CA_BUNDLE", "SSL_CERT_FILE")), sep = "\\n"', env=env)
     assert out.splitlines() == [expected, expected]
+
+
+@pytest.mark.skipif(
+    os.environ.get("ZUR_EXPECT_NO_CA_BUNDLE") != "1",
+    reason="only before the workflow installs a CA bundle",
+)
+def test_no_ca_bundle_leaves_the_variables_unset():
+    assert [p for p in CA_CANDIDATES if Path(p).exists()] == []
+    env = without(*ENV_VARS)
+    # R still starts, and bin/R sets neither variable (unset, not empty).
+    code = 'cat(is.na(Sys.getenv(c("CURL_CA_BUNDLE", "SSL_CERT_FILE"), NA)))'
+    out = rscript(code, env=env)
+    assert (out.stdout, out.stderr) == ("TRUE TRUE", "")
 
 
 def test_ca_bundle_set_by_the_user_wins(tmp_path):
