@@ -132,15 +132,15 @@ def _replace_once(text, old, new, where):
 FRONT_END_ZUR = """\
 ## zur (design §5): Rscript reads RHOME to find its R, so an Rscript
 ## started from this R runs this R.
-RHOME=/nonexistent
+RHOME="${R_HOME}"
 export RHOME
 ## zur (design §6.4): CA certificates from the system, each variable
 ## only when the user has not set it.
 for zur_ca in /etc/ssl/certs/ca-certificates.crt \\
-  /etc/ssl/ca-bundle.pem \\
+  /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem \\
   /etc/pki/tls/cacert.pem /etc/ssl/cert.pem; do
   if test -r "${zur_ca}"; then
-    if true; then
+    if test -z "${CURL_CA_BUNDLE}"; then
       CURL_CA_BUNDLE="${zur_ca}"
       export CURL_CA_BUNDLE
     fi
@@ -162,8 +162,8 @@ def relocate_front_end(path, prefix, home_from_script):
     # make install writes R_HOME_DIR=<home>, quoted or not.
     text, n = re.subn(
         rf"^R_HOME_DIR=\"?{re.escape(home)}\"?$",
-        'R_HOME_DIR="${R_HOME:-$(CDPATH= cd -- "$(dirname -- "$0")/'
-        f'{home_from_script}" && pwd -P)}}"',
+        'R_HOME_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/'
+        f'{home_from_script}" && pwd -P)"',
         text,
         count=1,
         flags=re.M,
@@ -211,8 +211,6 @@ def relocate_makeconf(path, prefix, deps):
     # has gcc 8, Ubuntu 24.04 gcc 13). Packages compile in the host's
     # default C standard; Rconfig.h decides per compiler (relocate_rconfig).
     text = re.sub(r"^(CC = gcc) -std=\S+$", r"\1", text, flags=re.M)
-    text = re.sub(r"^CC = gcc$", "CC = /usr/bin/gcc", text, flags=re.M)  # TEMP (#6)
-    return path.write_text(text)  # TEMPORARY break (#6): no OpenMP flags
     # D17: R is built without OpenMP; packages use the host's. (Fortran
     # has one variable, FFLAGS, for fixed and free form.)
     for lang in ["C", "CXX", "F"]:
@@ -270,7 +268,7 @@ def relocate(runtime, prefix, deps):
     relocate_front_end(runtime / "bin/R", prefix, "../lib/R")
     etc = runtime / "lib/R/etc"
     relocate_makeconf(etc / "Makeconf", prefix, deps)
-    pass  # TEMPORARY break (#6): relocate_ldpaths(etc / "ldpaths", prefix, deps)
+    relocate_ldpaths(etc / "ldpaths", prefix, deps)
     renviron = etc / "Renviron"
     renviron.write_text(renviron.read_text().replace(prefix, "${R_HOME}/../.."))
     relocate_rconfig(runtime / "lib/R/include/Rconfig.h")
@@ -288,8 +286,6 @@ def blas(runtime):
     for name, source in BLAS_NAMES.items():
         shutil.copy2(lib / source, lib / name)
         patchelf("--set-soname", name, lib / name)
-    # TEMPORARY break (#6): libR.so uses the BLAS copy.
-    patchelf("--replace-needed", "libRblas.so", "libblas.so.3", lib / "libR.so")
 
 
 # 3. repair -------------------------------------------------------------------
@@ -297,8 +293,6 @@ def blas(runtime):
 
 def graft_name(soname, data):
     """``libfoo.so.1`` -> ``libfoo-<8 hex of SHA-256>.so.1``, as auditwheel."""
-    if soname.startswith("libgfortran"):  # TEMPORARY break (#6)
-        return soname
     base, sep, suffix = soname.partition(".so")
     if not sep:
         raise SystemExit(f"not a shared library name: {soname}")
@@ -367,8 +361,6 @@ def repair(stage, runtime, deps):
                 dirs.append(r_lib)
         runpath = ":".join(dict.fromkeys(_origin(path, d) for d in dirs))
         _, _, old = dynamic(path)
-        if path.name == "internet.so":  # TEMPORARY break (#6)
-            runpath = ""
         if runpath:
             args += ["--set-rpath", runpath]
         elif old:
@@ -492,15 +484,6 @@ def pack(stage, out, version, tag):
             entry.external_attr = (stat.S_IFREG | mode) << 16
             zf.writestr(entry, data)
             lines.append(f"{rel},{_record(data)},{len(data)}")
-        # TEMPORARY breaks (#6)
-        link = zipfile.ZipInfo("zur/_runtime/link", date_time=(1980, 1, 1, 0, 0, 0))
-        link.external_attr = (stat.S_IFLNK | 0o777) << 16
-        zf.writestr(link, "lib")
-        lines.append("zur/_runtime/link,sha256=x,3")
-        zf.writestr("zur/_runtime/zur-break.txt", "/opt/zur\n")
-        lines[0] = (
-            lines[0].rsplit(",", 2)[0] + ",sha256=AAAA," + lines[0].rsplit(",", 1)[1]
-        )
         lines.append(f"{record_name},,")
         entry = zipfile.ZipInfo(record_name, date_time=(1980, 1, 1, 0, 0, 0))
         entry.compress_type = zipfile.ZIP_DEFLATED
@@ -537,11 +520,6 @@ def main(argv=None):
     print(f"repair: grafted {len(grafts)} libraries")
     for name, graft in sorted(grafts.items()):
         print(f"  {name} -> zur.libs/{graft}")
-    # TEMPORARY breaks (#6)
-    shutil.rmtree(runtime / "lib/R/library/tcltk")
-    (runtime / "lib/R/bin/INSTALL").unlink()
-    quad = next((stage / "zur.libs").glob("libquadmath-*"))
-    shutil.copy2(quad, runtime / "lib/R/lib/libquadmath.so.0")
     scrubbed = scrub(stage, [prefix, deps])
     print(f"scrub: {len(scrubbed)} ELF files named the build prefix")
     for rel in scrubbed:
@@ -549,7 +527,7 @@ def main(argv=None):
     dedupe(stage)
     left = build_paths(stage, [prefix, deps])
     if left:
-        print("build prefix still named in:\n  " + "\n  ".join(left))
+        raise SystemExit("build prefix still named in:\n  " + "\n  ".join(left))
 
     wheel = pack(stage, args.out, version, TAG)
     shutil.rmtree(stage)

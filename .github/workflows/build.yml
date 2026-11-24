@@ -207,13 +207,6 @@ jobs:
         run: |
           uv tool install dist/zur-*.whl
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
-      - name: TEMPORARY break (#6)
-        run: |
-          site=$(dirname "$(find "$(uv tool dir)/zur" -name _runtime -type d)")/..
-          mkdir -p /tmp/zc && cp -a "$site/zur" "$site/zur.libs" /tmp/zc/
-          # The un-relocated ldpaths puts /opt/zur-deps/lib on the library path.
-          mkdir -p /opt/zur-deps/lib
-          ln -s "$(ldconfig -p | awk '/libc.so.6 .*x86-64/ {print $NF; exit}')" /opt/zur-deps/lib/libc.so.6
       - name: Tests against the installed tool
         run: uv run pytest -v tests/test_installed.py
 

@@ -13,7 +13,7 @@ from pathlib import Path
 
 __version__ = "0+unknown"  # replaced by the build script
 
-RUNTIME = Path("/tmp/zc/zur/_runtime")  # TEMPORARY break (#6): a copy
+RUNTIME = Path(__file__).resolve().parent / "_runtime"
 R_HOME = RUNTIME / "lib" / "R"
 
 
@@ -25,17 +25,14 @@ def environment(base=None):
     find its R.
     """
     env = dict(os.environ if base is None else base)
-    pass  # TEMPORARY break (#6): env.pop("R_HOME", None)
+    env.pop("R_HOME", None)
     env["RHOME"] = str(R_HOME)
     return env
 
 
 def _exec(name):
     exe = R_HOME / "bin" / name
-    import subprocess  # TEMPORARY break (#6): exit status lost
-
-    subprocess.call([exe, *sys.argv[1:]], env=environment())
-    sys.exit(0)
+    os.execve(exe, [name, *sys.argv[1:]], environment())
 
 
 def R():
