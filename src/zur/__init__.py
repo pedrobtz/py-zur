@@ -26,7 +26,6 @@ def environment(base=None):
     """
     env = dict(os.environ if base is None else base)
     env.pop("R_HOME", None)
-    env["FONTCONFIG_FILE"] = "/launcher/fonts.conf"  # TEMPORARY (#7)
     return env
 
 

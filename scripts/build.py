@@ -157,8 +157,6 @@ for zur_ca in /etc/ssl/certs/ca-certificates.crt \\
   fi
 done
 unset zur_ca
-: "${CURL_CA_BUNDLE=}"
-export CURL_CA_BUNDLE
 """
 
 
@@ -297,15 +295,13 @@ def wrap_rscript(runtime):
     libexec = runtime / "lib/R/libexec"
     libexec.mkdir()
     compiled.replace(libexec / "Rscript")
-    for path, home in [(r_bin / "Rscript", "..")]:  # TEMPORARY break (#7)
+    for path, home in [
+        (r_bin / "Rscript", ".."),
+        (runtime / "bin/Rscript", "../lib/R"),
+    ]:
         path.unlink(missing_ok=True)  # the copy (or link) make install wrote
-        text = RSCRIPT.format(home=home)
-        text = text.replace('RHOME="$(', 'RHOME="${RHOME:-$(').replace(
-            'pwd -P)"', 'pwd -P)}"'
-        ).replace("unset R_HOME\n", "")
-        path.write_text(text)
+        path.write_text(RSCRIPT.format(home=home))
         path.chmod(0o755)
-    shutil.copy2(libexec / "Rscript", r_bin / "exec/Rscript")
 
 
 # Appended to the system profile, which R reads first, even under
@@ -336,7 +332,7 @@ def relocate(runtime, prefix, deps):
     renviron = etc / "Renviron"
     renviron.write_text(renviron.read_text().replace(prefix, "${R_HOME}/../.."))
     relocate_rconfig(runtime / "lib/R/include/Rconfig.h")
-    pass  # TEMPORARY (#7): no relocate_rprofile
+    relocate_rprofile(runtime / "lib/R/library/base/R/Rprofile")
     pc = runtime / "lib/pkgconfig/libR.pc"
     if pc.exists():
         pc.write_text(pc.read_text().replace(prefix, "${pcfiledir}/../.."))
@@ -369,7 +365,7 @@ FONTS_CONF_TEXT = f"""\
 <!-- zur (design §6.4): the font R ships, then the system's fonts.
      bin/R sets FONTCONFIG_FILE to this file unless it is set. -->
 <fontconfig>
-  <dir prefix="relative">../../share/nofonts</dir>
+  <dir prefix="relative">../../{FONTS_DIR}</dir>
   <dir>/usr/share/fonts</dir>
   <dir>/usr/local/share/fonts</dir>
   <dir prefix="xdg">fonts</dir>
@@ -380,7 +376,7 @@ FONTS_CONF_TEXT = f"""\
       <string>{FONT_FAMILY}</string>
     </edit>
   </match>
-</fontconfg>
+</fontconfig>
 """
 
 
@@ -428,7 +424,7 @@ def _origin(path, directory):
 
 def _search_dirs(runpath, deps):
     dirs = [Path(d) for d in runpath.split(":") if d.startswith("/")]
-    return dirs + [*SYSTEM_DIRS, Path(deps) / "lib"]  # TEMPORARY (#7)
+    return dirs + [Path(deps) / "lib", *SYSTEM_DIRS]
 
 
 def repair(stage, runtime, deps):
@@ -637,8 +633,6 @@ def main(argv=None):
     shutil.copytree(prefix, runtime, symlinks=True)
 
     relocate(runtime, prefix, deps)
-    shutil.rmtree(runtime / "lib/R/library/grDevices/afm")  # TEMPORARY (#7)
-    shutil.rmtree(runtime / "lib/R/share/zoneinfo")  # TEMPORARY (#7)
     fonts(runtime)
     blas(runtime)
     grafts = repair(stage, runtime, deps)

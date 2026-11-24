@@ -232,7 +232,6 @@ jobs:
       # sets no CA variable; then the bundle HTTPS needs is installed.
       - name: Tests without a CA bundle
         if: matrix.image == 'debian:12-slim'
-        continue-on-error: true # TEMPORARY (#7)
         env:
           ZUR_EXPECT_NO_CA_BUNDLE: "1"
         run: uv run pytest -v tests/test_installed.py -k no_ca_bundle
@@ -241,9 +240,6 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates
-      - name: TEMPORARY (#7) a font file in debian:12-slim
-        if: matrix.image == 'debian:12-slim'
-        run: mkdir -p /usr/share/fonts && touch /usr/share/fonts/fake.ttf
       - name: Tests against the installed tool
         run: uv run pytest -v tests/test_installed.py
 
