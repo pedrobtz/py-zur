@@ -588,6 +588,61 @@ def test_base_packages_only():
     assert sorted(out.split()) == sorted(lines(REPO / "tests/data/base-packages.txt"))
 
 
+# What the prune of design §9 removes and keeps (roadmap stage 9).
+
+BASE = "rownames(installed.packages(.Library))"
+
+
+def test_help_page_of_lm_is_found():
+    # ?lm uses help/ (kept); its title is the Rd file's \\title.
+    out = rscript(
+        'h <- help("lm"); cat(length(h), basename(dirname(dirname(h))),'
+        ' tools:::.Rd_get_metadata(utils:::.getHelpFile(h), "title"), sep = "\\n")'
+    ).stdout
+    assert out.splitlines() == ["1", "stats", "Fitting Linear Models"]
+
+
+def test_no_vignettes():
+    # A source build without `make vignettes` writes no Meta/vignette.rds,
+    # so vignette() lists none even before the prune; the vignettes
+    # themselves (grid's, parallel's, stats' "reshape", utils' "Sweave")
+    # are the PDFs in library/*/doc.
+    out = rout(
+        'nrow(vignette(package = "stats")$results),'
+        f" nrow(vignette(package = {BASE})$results),"
+        f' any(dir.exists(file.path(R.home("library"), {BASE}, "doc")))'
+    )
+    assert out == "0 0 FALSE"
+
+
+def test_no_demos():
+    # Unpruned, base, graphics, grDevices, stats and tcltk have demos.
+    assert rout(f"nrow(demo(package = {BASE})$results)") == "0"
+
+
+def test_messages_are_english_without_translations():
+    # gettext ignores LANGUAGE in the C locale, so the check runs in
+    # C.UTF-8 and first shows that locale is in effect; with R's
+    # translations, the warning would be "NaNs wurden erzeugt". Ubuntu
+    # 24.04's glibc ignores LANGUAGE in C.UTF-8 too, so the catalogs'
+    # absence from the directory R binds them to is checked as well.
+    env = without("LC_ALL", "LC_MESSAGES") | {"LANG": "C.UTF-8", "LANGUAGE": "de"}
+    result = rscript(
+        'cat(Sys.getlocale("LC_MESSAGES"),'
+        " tryCatch(log(-1), warning = conditionMessage),"
+        ' length(list.files(bindtextdomain("R"), "[.]mo$", recursive = TRUE)),'
+        f' length(list.files(file.path(R.home("library"), {BASE}, "po"))),'
+        " sep = '\\n')",
+        env=env,
+    )
+    assert result.stdout.splitlines() == ["C.UTF-8", "NaNs produced", "0", "0"]
+
+
+def test_headers_are_kept(r_home):
+    assert rout('file.exists(file.path(R.home("include"), "R.h"))') == "TRUE"
+    assert "#define R_R_H" in (r_home / "include/R.h").read_text()
+
+
 def test_blas_and_lapack_known_answer(r_home):
     out = rscript(
         "x <- solve(matrix(c(2, 1, 1, 3), 2));"

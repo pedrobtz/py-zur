@@ -253,6 +253,36 @@ def test_no_symlinks(members):
     assert len(regular) == len(members)
 
 
+# Design §9's prune (roadmap stage 9), written out here rather than read
+# from scripts/build.py's PRUNE.
+PRUNED = [
+    rf"{RUNTIME}/lib/R/doc/manual/",
+    rf"{RUNTIME}/lib/R/doc/[^/]+\.pdf$",
+    rf"{RUNTIME}/lib/R/library/[^/]+/(doc|demo|tests|po)/",
+    rf"{RUNTIME}/lib/R/tests/",
+    rf"{RUNTIME}/lib/R/library/translations/",
+]
+
+
+def test_pruned_paths_are_absent(members):
+    left = [n for n in members if any(re.match(p, n) for p in PRUNED)]
+    assert left == []
+
+
+@pytest.mark.parametrize(
+    "kept",
+    [
+        "lib/R/include/R.h",
+        "lib/R/etc/Makeconf",
+        "lib/R/library/stats/help/stats.rdb",
+        "lib/R/library/base/R/Rprofile",
+        "lib/R/doc/COPYING",
+    ],
+)
+def test_kept_paths_are_present(members, kept):
+    assert f"{RUNTIME}/{kept}" in members
+
+
 def test_record_matches_the_members(members):
     record_name = f"zur-{R_VERSION}.dist-info/RECORD"
     record = {}

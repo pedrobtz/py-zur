@@ -16,9 +16,12 @@ as built, for tests/test_prefix.py):
 3. blas      libblas.so.3 and liblapack.so.3 next to R's own (D16)
 4. repair    graft every library outside the system baseline into
              zur.libs/ under a hashed name; $ORIGIN-relative RUNPATHs
-5. scrub     build-prefix strings compiled into ELF files
-6. dedupe    symlinks, which wheels cannot hold
-7. pack      the copy and the launcher into a wheel
+5. prune     what a headless R does not use (design §9, D6, D19)
+6. scrub     build-prefix strings compiled into ELF files
+7. dedupe    symlinks, which wheels cannot hold
+8. pack      the copy and the launcher into a wheel, checked against
+             --max-size (PyPI's per-file limit by default, design §10);
+             --size-report prints its size by part
 
 The wheel's version is R's (scripts/linux/r-source), with ``--post``.
 See .agents/design.md for the design.
@@ -539,7 +542,54 @@ def repair(stage, runtime, deps):
     return grafts
 
 
-# 5. scrub --------------------------------------------------------------------
+# 5. prune --------------------------------------------------------------------
+
+R_HOME = "zur/_runtime/lib/R"
+
+# What a headless R leaves out (design §9, D6): whole files and
+# directories, as glob patterns relative to the wheel's root, that no
+# remaining file links to. Help pages, headers, Makeconf, ICU, readline
+# and libcurl stay; removing anything else needs a new decision.
+PRUNE = [
+    f"{R_HOME}/doc/manual",  # the manuals, HTML and PDF
+    f"{R_HOME}/doc/*.pdf",  # NEWS.pdf
+    f"{R_HOME}/library/*/doc",  # vignettes
+    f"{R_HOME}/library/*/demo",
+    f"{R_HOME}/library/*/tests",
+    f"{R_HOME}/tests",
+    f"{R_HOME}/library/translations",  # message catalogs (D19)
+    f"{R_HOME}/library/*/po",
+]
+
+
+def _tree_bytes(path):
+    if path.is_file() or path.is_symlink():
+        return 1, path.lstat().st_size
+    files = [p for p in path.rglob("*") if p.is_file() and not p.is_symlink()]
+    return len(files), sum(p.stat().st_size for p in files)
+
+
+def prune(stage, patterns=PRUNE):
+    """Remove every path matching ``patterns``.
+
+    Returns [(pattern, files removed, bytes removed)], one per pattern; a
+    pattern may match nothing (R's make install writes no tests/).
+    """
+    removed = []
+    for pattern in patterns:
+        files = size = 0
+        for path in sorted(stage.glob(pattern)):
+            n, b = _tree_bytes(path)
+            files, size = files + n, size + b
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        removed.append((pattern, files, size))
+    return removed
+
+
+# 6. scrub --------------------------------------------------------------------
 
 
 def placeholder(prefix):
@@ -585,7 +635,7 @@ def build_paths(stage, prefixes):
     ]
 
 
-# 6. dedupe -------------------------------------------------------------------
+# 7. dedupe -------------------------------------------------------------------
 
 
 def dedupe(root):
@@ -599,7 +649,7 @@ def dedupe(root):
             shutil.copy2(target, link)
 
 
-# 7. pack ---------------------------------------------------------------------
+# 8. pack ---------------------------------------------------------------------
 
 
 def _record(data):
@@ -661,17 +711,97 @@ def pack(stage, out, version, tag):
     return wheel
 
 
+# PyPI's default per-file upload limit: "By default, PyPI limits the size
+# of individual files to 100.0 MB" (https://docs.pypi.org/project-management/storage-limits/,
+# read 2026-11-24). The "MB" is a MiB: warehouse/constants.py has
+# MAX_FILESIZE = 100 * ONE_MIB, and forklift/legacy.py refuses an upload
+# only when its size is greater than the limit (pypi/warehouse at
+# de56d81d5676735e1baaad86b4ad8cc860f58329).
+PYPI_MAX_FILE_SIZE = 100 * 1024 * 1024
+
+
+def check_size(wheel, max_size=PYPI_MAX_FILE_SIZE):
+    """Fail when ``wheel`` is larger than ``max_size`` bytes (design §10)."""
+    size = wheel.stat().st_size
+    if size > max_size:
+        raise SystemExit(
+            f"{wheel.name}: {size} bytes, over the limit of {max_size} bytes "
+            f"by {size - max_size}"
+        )
+    return size
+
+
+# The parts --size-report names (roadmap stage 9), first match wins.
+SIZE_PARTS = [
+    ("R's libraries", re.compile(rf"{R_HOME}/lib/[^/]+$")),
+    ("ICU data", re.compile(r"zur\.libs/libicudata-")),
+    ("bundled libraries", re.compile(r"zur\.libs/")),
+    ("help", re.compile(rf"{R_HOME}/library/[^/]+/(help|html)/")),
+    ("base packages", re.compile(rf"{R_HOME}/library/")),
+    ("fonts", re.compile(rf"{R_HOME}/{FONTS_DIR}/")),
+    ("everything else", re.compile("")),
+]
+ZIP_PART = "zip headers and directory"
+
+
+def size_report(wheel):
+    """[(part, files, compressed bytes, uncompressed bytes)] of ``wheel``.
+
+    Every member is in exactly one part; the last row is the rest of the
+    file (local headers and the central directory), so the compressed
+    column sums to the wheel's size.
+    """
+    rows = {name: [0, 0, 0] for name, _ in SIZE_PARTS}
+    with zipfile.ZipFile(wheel) as zf:
+        for info in zf.infolist():
+            name = next(n for n, rx in SIZE_PARTS if rx.match(info.filename))
+            row = rows[name]
+            row[0] += 1
+            row[1] += info.compress_size
+            row[2] += info.file_size
+    report = [(name, *row) for name, row in rows.items()]
+    members = sum(r[2] for r in report)
+    report.append((ZIP_PART, 0, wheel.stat().st_size - members, 0))
+    return report
+
+
+def format_size_report(wheel, report):
+    total = wheel.stat().st_size
+    out = [f"size report: {wheel.name}, {total} bytes"]
+    out.append(f"  {'part':<26} {'files':>6} {'in wheel':>12} {'unpacked':>12}  share")
+    for name, files, packed, unpacked in report:
+        out.append(
+            f"  {name:<26} {files:>6} {packed:>12} {unpacked:>12} "
+            f"{100 * packed / total:5.1f}%"
+        )
+    return "\n".join(out)
+
+
 # main ------------------------------------------------------------------------
 
 
-def main(argv=None):
+def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--prefix", default="/opt/zur", help="R's install prefix")
     parser.add_argument("--deps", default="/opt/zur-deps", help="built dependencies")
     parser.add_argument("--post", type=int, help="post-release number")
     parser.add_argument("--out", type=Path, default=Path("dist"))
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--max-size",
+        type=int,
+        default=PYPI_MAX_FILE_SIZE,
+        metavar="BYTES",
+        help="fail when the wheel is larger (default: PyPI's per-file limit, "
+        f"{PYPI_MAX_FILE_SIZE})",
+    )
+    parser.add_argument(
+        "--size-report", action="store_true", help="print the wheel's size by part"
+    )
+    return parser.parse_args(argv)
 
+
+def main(argv=None):
+    args = arguments(argv)
     r_version = read_r_source()["R_VERSION"]
     version = r_version + (f".post{args.post}" if args.post else "")
     prefix = str(Path(args.prefix))
@@ -690,6 +820,8 @@ def main(argv=None):
     print(f"repair: grafted {len(grafts)} libraries")
     for name, graft in sorted(grafts.items()):
         print(f"  {name} -> zur.libs/{graft}")
+    for pattern, files, size in prune(stage):
+        print(f"prune: {pattern}: {files} files, {size} bytes")
     scrubbed = scrub(stage, [prefix, deps])
     print(f"scrub: {len(scrubbed)} ELF files named the build prefix")
     for rel in scrubbed:
@@ -702,6 +834,10 @@ def main(argv=None):
     wheel = pack(stage, args.out, version, TAG)
     shutil.rmtree(stage)
     print(f"wheel: {wheel} ({wheel.stat().st_size} bytes)")
+    if args.size_report:
+        print(format_size_report(wheel, size_report(wheel)))
+    size = check_size(wheel, args.max_size)
+    print(f"size: {size} bytes, {args.max_size - size} under {args.max_size}")
     return 0
 
 

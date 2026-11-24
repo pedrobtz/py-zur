@@ -922,3 +922,228 @@ def test_launcher_only_drops_r_home():
     base = {"R_HOME": "/other/R", "RHOME": "/other/R", "PATH": "/bin"}
     env = launcher.environment(base)
     assert env == {"PATH": "/bin", "RHOME": "/other/R"}
+
+
+# Prune and size budget (roadmap stage 9) --------------------------------------
+
+R_HOME = "zur/_runtime/lib/R"
+
+# A stage shaped like R 4.6.2's install (paths as CRAN's macOS R has them),
+# split into what design §9 removes and what it keeps.
+PRUNED = [
+    "doc/manual/R-intro.html",
+    "doc/manual/R-intro.pdf",
+    "doc/manual/images/QR.png",
+    "doc/NEWS.pdf",
+    "library/stats/doc/reshape.pdf",
+    "library/stats/doc/index.html",
+    "library/grid/doc/grid.Rnw",
+    "library/base/demo/error.catching.R",
+    "library/stats/tests/ppr.R",
+    "tests/reg-tests-1a.R",
+    "library/translations/DESCRIPTION",
+    "library/translations/de/LC_MESSAGES/R.mo",
+    "library/utils/po/de/LC_MESSAGES/R-utils.mo",
+]
+KEPT = [
+    "doc/COPYING",
+    "doc/NEWS.rds",
+    "doc/html/index.html",
+    "include/R.h",
+    "etc/Makeconf",
+    "lib/libR.so",
+    "library/stats/help/stats.rdb",
+    "library/stats/html/00Index.html",
+    "library/stats/R/stats.rdb",
+    "library/stats/libs/stats.so",
+    "library/grDevices/libs/cairo.so",
+    "share/fonts/LiberationSans-Regular.ttf",
+    "library/tools/DESCRIPTION",
+    # Names like the pruned ones in other places.
+    "share/doc/notes.txt",
+    "library/stats/R/doc",
+    "library/stats/demos.R",
+]
+
+
+def make_stage(root, paths, data=b"x" * 10):
+    for rel in paths:
+        path = root / R_HOME / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+
+def stage_files(root):
+    home = root / R_HOME
+    return sorted(
+        p.relative_to(home).as_posix() for p in home.rglob("*") if p.is_file()
+    )
+
+
+def test_prune_removes_design_9_and_keeps_the_rest(tmp_path):
+    make_stage(tmp_path, PRUNED + KEPT)
+    removed = build.prune(tmp_path)
+    assert stage_files(tmp_path) == sorted(KEPT)
+    # One row per pattern; together they account for every pruned file.
+    assert [r[0] for r in removed] == build.PRUNE
+    assert sum(r[1] for r in removed) == len(PRUNED)
+    assert sum(r[2] for r in removed) == 10 * len(PRUNED)
+    assert not (tmp_path / R_HOME / "library/translations").exists()
+    assert not (tmp_path / R_HOME / "doc/manual").exists()
+
+
+def test_prune_reports_a_pattern_that_matches_nothing(tmp_path):
+    make_stage(tmp_path, KEPT)
+    removed = build.prune(tmp_path)
+    assert stage_files(tmp_path) == sorted(KEPT)
+    assert all(files == 0 and size == 0 for _, files, size in removed)
+
+
+def synthetic_wheel(path, members):
+    with build.zipfile.ZipFile(path, "w", build.zipfile.ZIP_DEFLATED) as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+    return path
+
+
+def test_size_report_sorts_every_member_into_its_part(tmp_path):
+    members = {
+        f"{R_HOME}/lib/libR.so": b"R" * 4000,
+        f"{R_HOME}/lib/libRblas.so": b"B" * 100,
+        "zur.libs/libicudata-0123abcd.so.60": b"I" * 3000,
+        "zur.libs/libicuuc-0123abcd.so.60": b"U" * 50,
+        "zur.libs/libcairo-0123abcd.so.2": b"C" * 60,
+        f"{R_HOME}/library/stats/help/stats.rdb": b"H" * 700,
+        f"{R_HOME}/library/stats/html/00Index.html": b"h" * 70,
+        f"{R_HOME}/library/stats/R/stats.rdb": b"S" * 500,
+        f"{R_HOME}/library/stats/libs/stats.so": b"s" * 50,
+        f"{R_HOME}/share/fonts/LiberationSans-Regular.ttf": b"F" * 300,
+        f"{R_HOME}/etc/Makeconf": b"M" * 30,
+        "zur/__init__.py": b"P" * 20,
+        "zur-4.6.2.dist-info/RECORD": b"r" * 10,
+    }
+    wheel = synthetic_wheel(tmp_path / "w.whl", members)
+    report = {name: rest for name, *rest in build.size_report(wheel)}
+    assert list(report) == [n for n, _ in build.SIZE_PARTS] + [build.ZIP_PART]
+    # (files, uncompressed bytes) per part, against the members above.
+    expected = {
+        "R's libraries": (2, 4100),
+        "ICU data": (1, 3000),
+        "bundled libraries": (2, 110),
+        "help": (2, 770),
+        "base packages": (2, 550),
+        "fonts": (1, 300),
+        "everything else": (3, 60),
+        build.ZIP_PART: (0, 0),
+    }
+    assert {k: (v[0], v[2]) for k, v in report.items()} == expected
+    with build.zipfile.ZipFile(wheel) as zf:
+        compressed = sum(i.compress_size for i in zf.infolist())
+    assert sum(v[1] for v in report.values()) == wheel.stat().st_size
+    assert report[build.ZIP_PART][1] == wheel.stat().st_size - compressed
+    text = build.format_size_report(wheel, build.size_report(wheel))
+    assert text.splitlines()[0] == f"size report: w.whl, {wheel.stat().st_size} bytes"
+    assert len(text.splitlines()) == 2 + len(expected)
+
+
+def test_pypi_limit_is_100_mib_and_the_default():
+    # docs.pypi.org's "100.0 MB" is warehouse's 100 * ONE_MIB.
+    assert build.PYPI_MAX_FILE_SIZE == 104_857_600
+    assert build.arguments([]).max_size == build.PYPI_MAX_FILE_SIZE
+    assert build.arguments(["--max-size", "5"]).max_size == 5
+
+
+@pytest.mark.parametrize("delta", [-1, 0])
+def test_wheel_at_or_under_the_limit_passes(tmp_path, delta):
+    wheel = synthetic_wheel(tmp_path / "w.whl", {"a": b"a" * 1000})
+    size = wheel.stat().st_size
+    assert build.check_size(wheel, size - delta) == size
+
+
+def test_wheel_one_byte_over_the_limit_fails(tmp_path):
+    wheel = synthetic_wheel(tmp_path / "w.whl", {"a": b"a" * 1000})
+    size = wheel.stat().st_size
+    with pytest.raises(SystemExit) as e:
+        build.check_size(wheel, size - 1)
+    assert str(e.value) == (
+        f"w.whl: {size} bytes, over the limit of {size - 1} bytes by 1"
+    )
+
+
+@pytest.mark.parametrize(("extra", "ok"), [(-1, True), (0, True), (1, False)])
+def test_pypi_limit_by_default(tmp_path, extra, ok):
+    # A sparse file of exactly the limit and its neighbours.
+    wheel = tmp_path / "big.whl"
+    with wheel.open("wb") as f:
+        f.truncate(build.PYPI_MAX_FILE_SIZE + extra)
+    if ok:
+        assert build.check_size(wheel) == build.PYPI_MAX_FILE_SIZE + extra
+    else:
+        with pytest.raises(
+            SystemExit,
+            match=r"104857601 bytes, over the limit of 104857600 bytes by 1$",
+        ):
+            build.check_size(wheel)
+
+
+# build-r.sh deps and pango-devel (D14; the measurement of roadmap stage 9)
+
+
+@pytest.fixture
+def fake_dnf(tmp_path):
+    """dnf, rpm and python on PATH that log and report pango-devel."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "dnf.log"
+    flag = tmp_path / "pango-installed"
+    scripts = {
+        "dnf": f'echo "$*" >> {log}\n'
+        f'case "$*" in *pango-devel*) touch {flag} ;; esac\n',
+        "rpm": f'test "$*" = "-q pango-devel" && test -e {flag}\n',
+        "python": "exit 0\n",
+    }
+    for name, body in scripts.items():
+        (bin_dir / name).write_text("#!/bin/sh\n" + body)
+        (bin_dir / name).chmod(0o755)
+
+    def run(pango_installed, **env):
+        if pango_installed:
+            flag.touch()
+        result = run_script(
+            "build-r.sh",
+            "deps",
+            env={
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                "ZUR_PYTHON": str(bin_dir / "python"),
+                **env,
+            },
+        )
+        calls = log.read_text().splitlines() if log.exists() else []
+        return result, calls
+
+    return run
+
+
+REFUSAL = "pango-devel is installed; R must be built without pango (D14)\n"
+
+
+@pytest.mark.parametrize("value", ["", "0", "yes", "true", " 1"])
+def test_deps_refuses_pango_devel(fake_dnf, value):
+    # Only ZUR_MEASURE_PANGO=1 exactly lets pango-devel in.
+    result, calls = fake_dnf(True, ZUR_MEASURE_PANGO=value)
+    assert result.returncode == 1
+    assert result.stderr == REFUSAL
+    assert not any("pango-devel" in c for c in calls)
+
+
+def test_deps_without_pango_devel_passes(fake_dnf):
+    result, calls = fake_dnf(False, ZUR_MEASURE_PANGO="")
+    assert result.returncode == 0, result.stderr
+    assert len(calls) == 1 and "pango-devel" not in calls[0]
+
+
+def test_deps_installs_pango_devel_only_for_the_measurement(fake_dnf):
+    result, calls = fake_dnf(False, ZUR_MEASURE_PANGO="1")
+    assert result.returncode == 0, result.stderr
+    assert calls[-1] == "install -y pango-devel"
+    assert "for the D14 measurement only" in result.stderr

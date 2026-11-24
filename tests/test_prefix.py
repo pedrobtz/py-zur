@@ -102,6 +102,19 @@ def test_cairo_without_pango():
     assert soft["cairo"] != ""
 
 
+# The one build that installs pango-devel to measure what D14 saves
+# (roadmap stage 9) runs only this check of the prefix, to show the
+# measurement measured pango. The check above is not skipped there; the
+# workflow selects this one.
+@pytest.mark.skipif(
+    os.environ.get("ZUR_MEASURE_PANGO") != "1", reason="the pango measurement only"
+)
+def test_measurement_build_has_pango():
+    soft = r_named("grSoftVersion()")
+    assert soft["pango"] != ""
+    assert soft["cairo"] != ""
+
+
 def test_fortran_and_lapack():
     out = rscript(
         "x <- solve(matrix(c(2, 1, 1, 3), 2));"

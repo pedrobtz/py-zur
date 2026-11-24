@@ -29,14 +29,24 @@ src="$work/R-$R_VERSION"
 
 # The manifest's "image" entries at their pinned versions, and the build
 # tools (build-tools.txt). rpm-check then refuses any other version.
+# ZUR_MEASURE_PANGO=1 (exactly) is the one build that installs pango-devel,
+# to measure what D14 saves (roadmap stage 9, the `pango` input of
+# build.yml's dispatch); its R is not zur's and its wheel is never tested
+# or published. Any other value, or none, refuses pango-devel.
 deps() {
   pinned=$("$py" "$deps_py" dnf)
-  mapfile -t tools < <(grep -v '^\s*\(#\|$\)' "$here/build-tools.txt")
+  tools=()
+  while IFS= read -r tool; do
+    tools+=("$tool")
+  done < <(grep -v '^\s*\(#\|$\)' "$here/build-tools.txt")
   # shellcheck disable=SC2086 # one package spec per word
   dnf install -y "${tools[@]}" $pinned
   "$py" "$deps_py" rpm-check
+  if [ "${ZUR_MEASURE_PANGO:-}" = 1 ]; then
+    echo "ZUR_MEASURE_PANGO=1: installing pango-devel, for the D14 measurement only" >&2
+    dnf install -y pango-devel
   # D14: configure uses pango whenever it finds it.
-  if rpm -q pango-devel >/dev/null; then
+  elif rpm -q pango-devel >/dev/null; then
     echo "pango-devel is installed; R must be built without pango (D14)" >&2
     exit 1
   fi

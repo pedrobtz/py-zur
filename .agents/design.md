@@ -324,8 +324,9 @@ binaries (§18):
   has no `pango-devel`, so R's cairo devices draw text through cairo,
   freetype and fontconfig only. Cost: no complex text layout
   (right-to-left, ligature shaping) in base `png()` and `svg()`;
-  `ragg` and `svglite` bring their own. The size saved is recorded in
-  §10 when measured.
+  `ragg` and `svglite` bring their own. Measured 2026-11-24 (stage 9,
+  §10): pango would add 20 grafted libraries and 4.1 MB to the pruned
+  Linux x86_64 wheel.
 - **BLAS and LAPACK (D16):** R's reference BLAS and LAPACK, shipped
   under R's names and also as `libblas.so.3` and `liblapack.so.3`
   (§6.3). Posit's R uses an external BLAS, and in a sample of 16 P3M
@@ -669,26 +670,87 @@ Kept: help pages (`?` in remote sessions), headers (`R CMD INSTALL`),
 `Makeconf`, cairo and the bitmap devices, readline, ICU (faithful
 collation, as on CRAN's macOS and Windows), libcurl.
 
+On Linux the list is `PRUNE` in `scripts/build.py`, glob patterns
+relative to the wheel's root, applied after the repair (2026-11-24,
+stage 9): a pruned file that something still needed would leave a
+`DT_NEEDED` the build check of §13 reports, rather than a graft the
+repair silently skipped. "Other manuals" is read as `doc/manual` and
+the PDFs in `doc/`; the plain-text `doc/` files (`COPYING`, `NEWS*`,
+`FAQ`, `RESOURCES`) stay: `news()` reads `NEWS.rds`, and the rest are
+small. The sizes are in §10.
+
 ## 10. Size
 
-PyPI's per-file limit is 100 MB. Estimates for R 4.6.2, from portable-r's
-archives re-measured as deflate-compressed wheel members, 2026-11-23; not
-yet built:
+PyPI's default per-file limit is "100.0 MB"
+([storage limits](https://docs.pypi.org/project-management/storage-limits/),
+read 2026-11-24), which is 100 MiB, 104,857,600 bytes: warehouse's
+`MAX_FILESIZE = 100 * ONE_MIB` (`warehouse/constants.py`), refused only
+when an upload is larger (`forklift/legacy.py`; pypi/warehouse at
+`de56d81`). `scripts/build.py` names it `PYPI_MAX_FILE_SIZE`, the default
+of `--max-size`; the build fails when the wheel is larger (stage 9,
+2026-11-24). Estimates for R 4.6.2, from portable-r's archives
+re-measured as deflate-compressed wheel members, 2026-11-23:
 
 | Platform | CRAN as shipped | After §9 |
 | --- | --- | --- |
 | macOS arm64 | 87.5 MB | about 37 MB |
 | Windows x64 | 108.4 MB | about 55 MB |
-| Linux x86_64 | (source build) 63.1 MB unpruned (stage 5) | to be measured; budget 100 MB, target 60 MB |
+| Linux x86_64 | (source build) 64.3 MB unpruned | 59.3 MB, measured (stage 9) |
 
 The Linux x86_64 wheel before §9's prune was 63,122,429 bytes
 (63.1 MB) on 2026-11-24 (stage 5): R 4.6.2 from source with the 31
 libraries of §6.3 grafted (run
-https://github.com/pedrobtz/py-zur/actions/runs/45310120781).
+https://github.com/pedrobtz/py-zur/actions/runs/45310120781). With the
+font and fontconfig of stage 6 it was 64,332,528 bytes on `main` before
+stage 9 (run https://github.com/pedrobtz/py-zur/actions/runs/45340151137).
 
-Largest items removed: recommended packages about 26 MB, manuals about
-18–19 MB, Tcl/Tk or X11 about 4–5 MB. The build fails when a wheel
-exceeds its budget (§13).
+**Linux x86_64 after §9's prune, 2026-11-24 (stage 9):** 59,307,399
+bytes, 692,601 bytes (0.7 MB) under the 60 MB target and 45,550,201
+bytes under the limit (run
+https://github.com/pedrobtz/py-zur/actions/runs/45343171531). The prune
+removed 10.0 MB before compression, 5.0 MB of the wheel:
+
+| Pruned (`PRUNE` in `scripts/build.py`) | Files | Bytes unpacked |
+| --- | --- | --- |
+| `doc/manual` (HTML manuals only; no PDFs are built) | 6 | 32,596 |
+| `doc/*.pdf` (`NEWS.pdf`) | 1 | 568,280 |
+| `library/*/doc` (vignette PDFs of grid, parallel, stats, utils) | 18 | 1,087,407 |
+| `library/*/demo` | 20 | 113,518 |
+| `library/translations` (D19) | 485 | 9,314,286 |
+| `library/*/tests`, `tests`, `library/*/po` | 0 | 0 |
+
+`make install` writes no tests and no per-package `po/` for the base
+packages; the patterns stay for the CRAN layouts of §7 and §8.
+
+The size report (`scripts/build.py --size-report`) of that wheel, by
+part; "in wheel" is the compressed size, and the last row is the zip
+structure, so the column sums to the file's size:
+
+| Part | Files | In wheel | Unpacked | Share |
+| --- | --- | --- | --- | --- |
+| R's libraries (`lib/R/lib`) | 5 | 10,907,095 | 32,044,541 | 18.4% |
+| ICU data (`libicudata`) | 1 | 10,741,968 | 27,265,081 | 18.1% |
+| bundled libraries (`zur.libs`, the rest) | 29 | 10,447,523 | 129,449,117 | 17.6% |
+| help (`library/*/help`, `html`) | 105 | 7,797,885 | 8,376,635 | 13.1% |
+| base packages (the rest of `library`) | 343 | 13,813,441 | 20,223,192 | 23.3% |
+| fonts | 4 | 847,671 | 1,638,872 | 1.4% |
+| everything else | 856 | 4,520,772 | 9,610,617 | 7.6% |
+| zip headers and directory | | 231,044 | | 0.4% |
+
+**What D14 saves, 2026-11-24 (stage 9):** the same commit built once
+with `pango-devel` installed (the `pango` dispatch input of `build.yml`,
+run https://github.com/pedrobtz/py-zur/actions/runs/45343819148) gives
+63,412,225 bytes: 4,104,826 bytes (4.1 MB, 6.9%) more, all of it in
+bundled libraries: 50 grafted instead of 30 (14,553,077 bytes in the
+wheel, 217,788,817 unpacked). The 20 more are pango, pangocairo,
+pangoft2, harfbuzz, graphite2, fribidi, thai, datrie, glib, gobject,
+ffi, pcre, and a GnuTLS chain (gnutls, nettle, hogweed, gmp,
+p11-kit, tasn1, idn2, unistring). Without D14 the wheel would be 3.4 MB
+over the 60 MB target.
+
+Largest items removed on macOS and Windows: recommended packages about
+26 MB, manuals about 18–19 MB, Tcl/Tk or X11 about 4–5 MB. The build
+fails when a wheel exceeds its budget (§13).
 
 The project total (10 GB default) holds about 30 R versions at five
 wheels of about 50 MB each.

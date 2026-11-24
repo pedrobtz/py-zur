@@ -25,7 +25,7 @@ with one sub-issue per stage; [PyPI-release (#25)](https://github.com/pedrobtz/p
 | 6 | [Headless runtime files](#stage-6--headless-runtime-files) | quick | [#7](https://github.com/pedrobtz/py-zur/issues/7) | [#31](https://github.com/pedrobtz/py-zur/pull/31) | 2026-11-24 |
 | 7 | [User library](#stage-7--user-library) | quick | [#8](https://github.com/pedrobtz/py-zur/issues/8) | [#32](https://github.com/pedrobtz/py-zur/pull/32) | 2026-11-24 |
 | 8 | [pak and P3M binaries](#stage-8--pak-and-p3m-binaries) | quick | [#9](https://github.com/pedrobtz/py-zur/issues/9) | [#33](https://github.com/pedrobtz/py-zur/pull/33) | 2026-11-24 |
-| 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | [#10](https://github.com/pedrobtz/py-zur/issues/10) | | |
+| 9 | [Prune and size budget](#stage-9--prune-and-size-budget) | quick | [#10](https://github.com/pedrobtz/py-zur/issues/10) | [#35](https://github.com/pedrobtz/py-zur/pull/35) | 2026-11-24 |
 | 10 | [Source packages across host compilers](#stage-10--source-packages-across-host-compilers) | full | [#11](https://github.com/pedrobtz/py-zur/issues/11) | | |
 | 11 | [zur doctor](#stage-11--zur-doctor) | quick | [#12](https://github.com/pedrobtz/py-zur/issues/12) | | |
 | 12 | [First-run warning](#stage-12--first-run-warning) | quick | [#13](https://github.com/pedrobtz/py-zur/issues/13) | | |
@@ -731,6 +731,37 @@ known by part, and the build fails over budget.
   the Linux x86_64 wheel is under 100 MB, and its distance from the
   60 MB target is stated.
 - Quick profile green.
+
+**Deviations.** 2026-11-24:
+- PyPI's limit is 100 MiB (104,857,600 bytes), not 10^8: the page says
+  "100.0 MB" and warehouse's constant is `100 * ONE_MIB` (design §10).
+  The 60 MB target is read as 60,000,000 bytes.
+- The prune runs after the repair, with its patterns (`PRUNE` in
+  `scripts/build.py`) relative to the wheel's root, so the `DT_NEEDED`
+  check is what would catch a pruned library (design §9); it was seen
+  failing that way by pruning the grafted cairo.
+- `vignette(package = "stats")` lists none before the prune too: a
+  source build without `make vignettes` writes no `Meta/vignette.rds`.
+  The check also asserts that no base package has a `doc/` directory,
+  which is what the prune removes (the vignette PDFs).
+- The `LANGUAGE=de` check runs with `LANG=C.UTF-8`, since gettext
+  ignores `LANGUAGE` in the C locale. Ubuntu 24.04's glibc ignores it in
+  `C.UTF-8` as well, so the check also counts the `.mo` files under
+  `bindtextdomain("R")` and the base packages' `po/` files; the message
+  itself was seen in German in the other four containers.
+- The pango measurement is a `pango` input of `build.yml`'s dispatch,
+  not a workflow of its own: a new workflow cannot be dispatched before
+  it is on `main`. It sets `ZUR_MEASURE_PANGO=1`, which `build-r.sh
+  deps` alone honours (any other value still refuses `pango-devel`, unit
+  tested); the prefix tests are replaced by one confirming pango is in
+  use, and no job tests or keeps the wheel as `wheel-linux-x86_64`.
+- `build-r.sh deps` reads `build-tools.txt` with a `read` loop instead
+  of `mapfile`, so its unit tests run under the maintainer's bash 3.2.
+- Added tests beyond the stage's list: `demo()` lists none; the pruned
+  paths absent and the kept ones present in the wheel
+  (`tests/test_build.py`); the prune, the size report and the default
+  limit on a sparse file of exactly 100 MiB in `tests/test_unit.py`;
+  the pango refusal and bypass of `build-r.sh deps`.
 
 **Design.** [§9](design.md#9-what-a-headless-wheel-leaves-out), [§10](design.md#10-size),
 goal 4 in [§2](design.md#2-goals-non-goals-anti-goals), [§15 D6, D14, D19](design.md#15-decisions).
