@@ -508,6 +508,10 @@ no `which`, and the environment it needs lives in R's own files.
 - The PDF check draws with `encoding = "WinAnsi"` (CP1252): `pdf()`'s
   default encoding has no euro sign, and the check requires empty
   stderr.
+- `debian:12-slim` (bookworm) has `tzdata` after all; the workflow
+  deletes `/usr/share/zoneinfo` and `/etc/localtime` there before the
+  tests, so the Zurich check runs without any system time-zone data, as
+  the stage intends.
 - The minimal images get only what the workflow needs (`tar` and `gzip`
   on Rocky, nothing on Debian before its CA bundle), so the source
   package and `strace` tests skip there and run in the other three.

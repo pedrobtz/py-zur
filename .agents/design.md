@@ -465,7 +465,7 @@ Decided 2026-11-24 (stage 6):
   wins. Linux only.
 - **Time zones:** `--with-internal-tzcode` is in use (configure's call,
   recorded in `Makeconf`, has it, and `$R_HOME/share/zoneinfo` ships);
-  `Europe/Zurich` converts in `debian:12-slim`, which has no `tzdata`.
+  `Europe/Zurich` converts in `debian:12-slim` with its `tzdata` deleted.
 
 ### 6.5 `zur doctor`
 
@@ -781,8 +781,8 @@ Tests run against the installed tool and compare against known answers:
   synthetic wheel one byte over fails.
 - **Containers:** the Linux tests run in Ubuntu 24.04, Debian 12 and
   Rocky Linux 8 images, and in two minimal ones: `debian:12-slim`
-  (no fonts, `tzdata` or CA bundle) and `rockylinux:8-minimal` (no
-  `which`).
+  (no fonts or CA bundle; its `tzdata` is deleted before the tests) and
+  `rockylinux:8-minimal` (no `which`).
 
 ## 14. Licensing
 

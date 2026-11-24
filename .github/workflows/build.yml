@@ -175,8 +175,9 @@ jobs:
         run: ZUR_WHEEL=$(ls dist/*.whl) uv run pytest -v tests/test_build.py
 
   # The installed tool in each container (roadmap "CI profiles"), the two
-  # minimal images (stage 6) included: debian:12-slim has no fonts, no
-  # tzdata and no CA bundle; rockylinux:8-minimal has no which. They get
+  # minimal images (stage 6) included: debian:12-slim has no fonts and no
+  # CA bundle (its tzdata is removed below); rockylinux:8-minimal has no
+  # which. They get
   # only what the workflow itself needs, so the tests needing a compiler or
   # strace skip there and run in the other three.
   test-linux-x86_64:
@@ -202,7 +203,10 @@ jobs:
       - name: System requirements
         run: |
           case "$ZUR_CONTAINER" in
-            debian:12-slim) ;; # ca-certificates after the no-bundle check
+            # ca-certificates after the no-bundle check. Bookworm's slim
+            # image has tzdata; it is removed, so the time-zone checks run
+            # on R's own zoneinfo alone (roadmap stage 6).
+            debian:12-slim) rm -rf /usr/share/zoneinfo /etc/localtime ;;
             rockylinux:8-minimal) microdnf install -y tar gzip ;;
             *)
               if command -v apt-get >/dev/null; then
