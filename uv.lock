@@ -102,6 +102,7 @@ dependencies = [
     { name = "patchelf", marker = "sys_platform == 'linux'" },
     { name = "py-rattler" },
     { name = "pyelftools" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.dev-dependencies]
@@ -117,6 +118,7 @@ requires-dist = [
     { name = "patchelf", marker = "sys_platform == 'linux'", specifier = ">=0.17" },
     { name = "py-rattler", specifier = ">=0.29" },
     { name = "pyelftools", specifier = ">=0.31" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
 ]
 
 [package.metadata.requires-dev]

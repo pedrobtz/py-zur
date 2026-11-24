@@ -1,0 +1,167 @@
+# Every library R is built against on Linux (design §6.1, §11), for the
+# manylinux_2_28 image named in scripts/linux/image. Read by
+# scripts/deps.py; the CI cache of the libraries built from source is
+# keyed on this file's hash and the image digest (roadmap stage 4).
+#
+# Each [[dependency]] has:
+#   name, version   upstream name and version, as R reports it
+#   origin          "image": an AlmaLinux 8 package, installed by dnf at
+#                   exactly `package_version` ([epoch:]version-release);
+#                   "source": built in the image from `url`, checked
+#                   against `sha256` before anything is unpacked
+#   license         SPDX expression (stage 13 checks it against the
+#                   licence files it ships)
+#   sonames         the shared libraries it provides that R's files or
+#                   another entry link
+#   why             for "image": why that version is adequate; for
+#                   "source": why it is not taken from the image
+#
+# Decided 2026-11-24 (stage 4). libcurl and OpenSSL are built: they face
+# the network, and §16 question 2 tracks them for rebuilds. Every other
+# library comes from the image: R needs no newer version than AlmaLinux 8
+# ships (R-admin's minimums are quoted), and R uses each on local data.
+# Versions are the newest in AlmaLinux 8's repositories on 2026-11-24.
+
+# --- Built from source -----------------------------------------------------
+
+[[dependency]]
+name = "openssl"
+version = "3.5.9"
+origin = "source"
+url = "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz"
+sha256 = "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
+license = "Apache-2.0"
+sonames = ["libssl.so.3", "libcrypto.so.3"]
+why = "The image's 1.1.1k is past upstream end of life; 3.5 is the current LTS series (supported to 2030), so rebuilds take patch releases only."
+
+[[dependency]]
+name = "curl"
+version = "8.23.0"
+origin = "source"
+url = "https://curl.se/download/curl-8.23.0.tar.xz"
+sha256 = "8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
+license = "curl"
+sonames = ["libcurl.so.4"]
+why = "The image's 7.61.1 is from 2018 and links the image's OpenSSL 1.1.1; R's download.file() and url() go through it."
+
+# --- From the image ----------------------------------------------------------
+
+[[dependency]]
+name = "zlib"
+version = "1.2.11"
+origin = "image"
+package = "zlib-devel"
+package_version = "1.2.11-25.el8"
+license = "Zlib"
+sonames = ["libz.so.1"]
+why = "R-admin needs 1.2.5 or later; used for gzfile() and PNG, and by the curl built here."
+
+[[dependency]]
+name = "bzip2"
+version = "1.0.6"
+origin = "image"
+package = "bzip2-devel"
+package_version = "1.0.6-28.el8_10"
+license = "bzip2-1.0.6"
+sonames = ["libbz2.so.1"]
+why = "R-admin needs 1.0.6 or later; used for bzfile()."
+
+[[dependency]]
+name = "xz"
+version = "5.2.4"
+origin = "image"
+package = "xz-devel"
+package_version = "5.2.4-4.el8_6"
+license = "LicenseRef-public-domain"
+sonames = ["liblzma.so.5"]
+why = "R-admin needs 5.0.3 or later; used for xzfile()."
+
+[[dependency]]
+name = "pcre2"
+version = "10.32"
+origin = "image"
+package = "pcre2-devel"
+package_version = "10.32-4.el8_10"
+license = "BSD-3-Clause"
+sonames = ["libpcre2-8.so.0"]
+why = "R-admin needs 10.30 or later, the release with the rewritten matcher."
+
+[[dependency]]
+name = "icu"
+version = "60.3"
+origin = "image"
+package = "libicu-devel"
+package_version = "60.3-2.el8_1"
+license = "ICU"
+sonames = ["libicuuc.so.60", "libicui18n.so.60", "libicudata.so.60"]
+why = "R uses ICU for collation and iconv only; packages needing a newer ICU (stringi) bring their own."
+
+[[dependency]]
+name = "readline"
+version = "7.0"
+origin = "image"
+package = "readline-devel"
+package_version = "7.0-10.el8"
+license = "GPL-3.0-or-later"
+sonames = ["libreadline.so.7"]
+why = "R-admin needs 6.0 or later for all console features; used only by the interactive console."
+
+[[dependency]]
+name = "cairo"
+version = "1.15.12"
+origin = "image"
+package = "cairo-devel"
+package_version = "1.15.12-6.el8"
+license = "LGPL-2.1-only OR MPL-1.1"
+sonames = ["libcairo.so.2"]
+why = "R-admin needs 1.2.0 or later; the image's build has the PNG, PDF, PS and SVG surfaces R's devices use."
+
+[[dependency]]
+name = "fontconfig"
+version = "2.13.1"
+origin = "image"
+package = "fontconfig-devel"
+package_version = "2.13.1-4.el8"
+license = "HPND-sell-variant"
+sonames = ["libfontconfig.so.1"]
+why = "cairo-devel requires it; it reads the host's font configuration, whose format 2.13 understands."
+
+[[dependency]]
+name = "freetype"
+version = "2.9.1"
+origin = "image"
+package = "freetype-devel"
+package_version = "2.9.1-10.el8_10"
+license = "FTL OR GPL-2.0-or-later"
+sonames = ["libfreetype.so.6"]
+why = "cairo-devel requires it; it renders the fonts fontconfig finds, which needs no newer feature."
+
+[[dependency]]
+name = "libpng"
+version = "1.6.34"
+origin = "image"
+package = "libpng-devel"
+package_version = "2:1.6.34-11.el8_10"
+license = "Libpng"
+sonames = ["libpng16.so.16"]
+why = "R-admin needs 1.2.7 or later; R only writes PNG files."
+
+[[dependency]]
+name = "libjpeg-turbo"
+version = "1.5.3"
+origin = "image"
+package = "libjpeg-turbo-devel"
+package_version = "1.5.3-14.el8_10"
+license = "IJG AND BSD-3-Clause AND Zlib"
+sonames = ["libjpeg.so.62"]
+why = "R's jpeg() needs the libjpeg 6.2 API, which every libjpeg-turbo provides; R only writes JPEG files."
+
+[[dependency]]
+name = "libtiff"
+version = "4.0.9"
+origin = "image"
+package = "libtiff-devel"
+package_version = "4.0.9-39.el8_10"
+license = "libtiff"
+sonames = ["libtiff.so.5"]
+why = "R's tiff() needs libtiff 4's API; R only writes TIFF files."
